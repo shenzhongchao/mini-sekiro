@@ -95,18 +95,20 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       maxHp: bossData.stats.maxHp,
       posture: 0,
       maxPosture: bossData.stats.maxPosture,
-      state: 'IDLE', 
+      state: 'IDLE',
       attackTimer: 60,
-      dodgeTimer: 0, 
-      dodgeCooldown: 0, 
-      maxWindup: 0, 
+      dodgeTimer: 0,
+      dodgeCooldown: 0,
+      maxWindup: 0,
       currentMove: '',
       attackType: 'LIGHT' as 'LIGHT' | 'HEAVY' | 'COMBO',
-      moveQueue: [] as string[], 
-      isPerilous: false, 
-      paceTimer: 0, 
+      moveQueue: [] as string[],
+      isPerilous: false,
+      paceTimer: 0,
       faceRight: false,
-      postureRecoveryTimer: 0 
+      postureRecoveryTimer: 0,
+      comboCounter: 0, // Tracks consecutive hits taken
+      lastHitTime: 0 // Frame number of last hit
     }
   });
 
@@ -162,6 +164,35 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             r1.x + r1.width > r2.x &&
             r1.y < r2.y + r2.height &&
             r1.y + r1.height > r2.y);
+  };
+
+  // Check if boss is cornered (near edges of arena)
+  const isBossCornered = (boss: any) => {
+    const CORNER_THRESHOLD = 120;
+    return boss.x < CORNER_THRESHOLD || boss.x > (800 - CORNER_THRESHOLD - boss.width);
+  };
+
+  // Boss counter-attack when being combo'd
+  const triggerBossCounterAttack = () => {
+    const { boss, player } = gameState.current;
+
+    // Hyper armor during counter
+    boss.state = 'WINDUP';
+    boss.attackType = 'HEAVY';
+    boss.isPerilous = Math.random() < 0.4; // 40% chance for perilous counter
+    boss.attackTimer = 25; // Fast windup
+    boss.maxWindup = 25;
+    boss.comboCounter = 0; // Reset combo counter
+
+    // Burst away from corner
+    const isLeftCorner = boss.x < 400;
+    boss.vx = (isLeftCorner ? 1 : -1) * 12;
+    boss.vy = -10;
+
+    setLog(boss.isPerilous ? "BOSS: 危险反击！" : "BOSS: 愤怒反击！");
+    playCombatSound('PERILOUS');
+    spawnSparks(boss.x + boss.width/2, boss.y + 40, 30, '#dc2626');
+    triggerShake(10);
   };
 
   // --- PHYSICS: RIGID BODY & ELASTIC COLLISION ---
@@ -222,8 +253,16 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     const { player, boss } = state;
     state.frame++;
-    if (state.shake > 0) state.shake *= 0.9; 
+    if (state.shake > 0) state.shake *= 0.9;
     if (state.flashIntensity > 0) state.flashIntensity -= 0.1;
+
+    // Auto-reset combo counter if boss hasn't been hit recently
+    const COMBO_RESET_WINDOW = 120; // 2 seconds
+    if (boss.lastHitTime > 0 && state.frame - boss.lastHitTime > COMBO_RESET_WINDOW) {
+      if (boss.comboCounter > 0) {
+        boss.comboCounter = 0;
+      }
+    }
 
     // --- SAKURA SPAWN LOGIC ---
     if (state.frame % 8 === 0) { 
@@ -459,8 +498,19 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                    boss.hp -= dmg;
                    boss.posture += postureDmg;
                    boss.state = 'HIT';
-                   boss.attackTimer = 8; 
+                   boss.attackTimer = 8;
                    boss.postureRecoveryTimer = 60;
+
+                   // Track combo only on last hit of Floating Passage (t === 50)
+                   if (t === 50) {
+                     const COMBO_WINDOW = 90;
+                     if (state.frame - boss.lastHitTime < COMBO_WINDOW) {
+                       boss.comboCounter++;
+                     } else {
+                       boss.comboCounter = 1;
+                     }
+                     boss.lastHitTime = state.frame;
+                   }
                }
            }
        }
@@ -686,21 +736,31 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     }
     else if (boss.state === 'WINDUP') {
       boss.attackTimer--;
-      boss.faceRight = player.x > boss.x; 
-      
+      boss.faceRight = player.x > boss.x;
+
+      // If cornered during windup, reposition
+      const isCornered = isBossCornered(boss);
+      if (isCornered && boss.attackTimer > boss.maxWindup * 0.5) {
+        const isLeftCorner = boss.x < 400;
+        // Slide toward center during windup
+        boss.vx += (isLeftCorner ? 1 : -1) * 0.8;
+      }
+
       if (boss.attackTimer <= 0) {
         boss.state = 'ATTACK';
-        const props = boss.attackType === 'HEAVY' ? ATK_HEAVY : 
+        const props = boss.attackType === 'HEAVY' ? ATK_HEAVY :
                       (boss.attackType === 'COMBO' ? ATK_COMBO : ATK_LIGHT);
-        boss.attackTimer = props.active; 
+        boss.attackTimer = props.active;
         playCombatSound('SWING');
 
         const lungeSpeed = boss.attackType === 'HEAVY' ? 9 : (boss.attackType === 'COMBO' ? 7 : 5);
         const dir = boss.faceRight ? 1 : -1;
         if (boss.y === GROUND_Y) {
              boss.vx = dir * lungeSpeed;
-             if (boss.attackType === 'HEAVY' && Math.random() < 0.3) {
-                 boss.vy = -10; 
+             // Higher jump chance when cornered or heavy attack
+             const jumpChance = isCornered ? 0.6 : (boss.attackType === 'HEAVY' ? 0.3 : 0);
+             if (Math.random() < jumpChance) {
+                 boss.vy = -10;
              }
         }
       }
@@ -840,10 +900,31 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       boss.vx *= 0.95;
       if (boss.attackTimer <= 0) {
          const dist = Math.abs(player.x - boss.x);
-         if (dist < 200) {
+         const isCornered = isBossCornered(boss);
+
+         // If cornered and player is close, try to escape with higher priority
+         if (isCornered && dist < 250) {
+            const escapeChance = 0.4 + (level * 0.03); // Higher levels escape more
+            if (Math.random() < escapeChance) {
+              // Quick escape dash
+              boss.state = 'DODGE';
+              boss.dodgeTimer = 18;
+              boss.dodgeCooldown = 60;
+              const isLeftCorner = boss.x < 400;
+              boss.vx = (isLeftCorner ? 1 : -1) * 18; // Fast escape
+              boss.vy = -8; // Jump away
+              setLog("BOSS: 脱困！");
+              playCombatSound('DASH');
+              spawnDashTrail(boss);
+            } else {
+              boss.state = 'BLOCK';
+              boss.attackTimer = 45;
+              setLog("BOSS: 强制防御");
+            }
+         } else if (dist < 200) {
             boss.state = 'BLOCK';
-            boss.attackTimer = 45; 
-            setLog("BOSS: 强制防御"); 
+            boss.attackTimer = 45;
+            setLog("BOSS: 强制防御");
          } else {
             boss.state = 'IDLE';
             boss.attackTimer = 20;
@@ -909,21 +990,40 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
          } else {
             playCombatSound('HIT');
             spawnSparks(boss.x + 25, boss.y + 40, 10, '#fca5a5');
-            triggerHitStop(4); 
-            
+            triggerHitStop(4);
+
             let dmg = playerStats.attackPower;
             if (isThrust) {
                 const chargeRatio = (player.thrustCharge || 0) / MAX_CHARGE_FRAMES;
                 dmg *= 1.2 + (chargeRatio * 1.0); // Up to 2.2x damage
             }
-            
+
             boss.hp -= dmg;
             boss.posture += 3 + (playerStats.attackPower * 0.1);
-            boss.vx += player.facingRight ? 2 : -2; 
-            
+            boss.vx += player.facingRight ? 2 : -2;
+
             boss.state = 'HIT';
-            boss.attackTimer = 12; 
-            boss.postureRecoveryTimer = 180; 
+            boss.attackTimer = 12;
+            boss.postureRecoveryTimer = 180;
+
+            // Combo counter logic
+            const COMBO_WINDOW = 90; // frames (~1.5 seconds)
+            if (state.frame - boss.lastHitTime < COMBO_WINDOW) {
+              boss.comboCounter++;
+            } else {
+              boss.comboCounter = 1;
+            }
+            boss.lastHitTime = state.frame;
+
+            // Check if boss should counter-attack
+            const isCornered = isBossCornered(boss);
+            const comboThreshold = Math.max(2, 5 - Math.floor(level / 5)); // Easier to trigger at higher levels
+            const shouldCounter = boss.comboCounter >= comboThreshold && (isCornered || boss.comboCounter >= comboThreshold + 2);
+
+            if (shouldCounter) {
+              // Delay counter by a frame to ensure hit animation plays
+              setTimeout(() => triggerBossCounterAttack(), 16);
+            }
          }
        } else {
          if (!isThrust) playCombatSound('SWING');
@@ -959,27 +1059,52 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
   const drawWolf = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, state: any, frame: number) => {
     ctx.save();
-    ctx.translate(x + w/2, y + h); 
+    ctx.translate(x + w/2, y + h);
 
     const isRun = state.state === 'RUN';
+    const isAttack = state.state === 'ATTACK';
+    const isBlock = state.state === 'BLOCK' || state.parryTimer > 0;
     const isThrust = state.state === 'THRUST_CHARGE' || state.state === 'THRUST_RELEASE';
     const dir = state.facingRight ? 1 : -1;
 
+    // Attack animation phases (18 frames total)
+    const attackProgress = isAttack ? (18 - state.attackTimer) / 18 : 0;
+    const isWindup = attackProgress < 0.3; // First 30% is windup
+    const isSwing = attackProgress >= 0.3 && attackProgress < 0.7; // Middle 40% is swing
+    const isRecovery = attackProgress >= 0.7; // Last 30% is recovery
+
+    // Body tilt during movement and attacks
+    let bodyTilt = 0;
+    if (isRun) {
+      bodyTilt = Math.sin(frame * 0.4) * 0.05 * dir;
+    }
+    if (isAttack && isSwing) {
+      // Lean forward during swing
+      bodyTilt = dir * 0.1;
+    }
+    if (isBlock) {
+      // Slight forward lean in defensive stance - ready to counter
+      bodyTilt = dir * 0.02;
+    }
+
+    ctx.rotate(bodyTilt);
+
     if (isThrust) {
         // Rotate whole body for thrust lunge
-        ctx.rotate(dir * Math.PI / 6); 
+        ctx.rotate(dir * Math.PI / 6);
         ctx.translate(dir * 10, 10);
     }
 
     // --- LEGS ---
-    ctx.fillStyle = '#3f3f46'; 
-    const legOffset = isRun ? Math.sin(frame * 0.4) * 10 : 0;
-    
+    ctx.fillStyle = '#3f3f46';
+    const legOffset = isRun ? Math.sin(frame * 0.4) * 12 : 0;
+    const legSpeed = Math.abs(state.vx) * 2; // Leg animation speed based on velocity
+
     ctx.beginPath();
     if (isThrust) {
          // Deep Lunge Legs
         ctx.moveTo(-10, -35);
-        ctx.lineTo(-30 * dir, 0); 
+        ctx.lineTo(-30 * dir, 0);
         ctx.lineTo(-20 * dir, 0);
         ctx.lineTo(0, -35);
 
@@ -987,9 +1112,32 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.lineTo(20 * dir, 0);
         ctx.lineTo(30 * dir, 0);
         ctx.lineTo(15, -35);
+    } else if (isBlock) {
+        // Defensive stance - low center of gravity, feet shoulder-width apart
+        const stanceWidth = 28; // Wider than normal for stability
+        ctx.moveTo(-12, -28); // Lower hip position for deeper crouch
+        ctx.lineTo(-stanceWidth * dir, 0);
+        ctx.lineTo(-18 * dir, 0);
+        ctx.lineTo(-2, -28);
+        ctx.moveTo(2, -28);
+        ctx.lineTo(18 * dir, 0);
+        ctx.lineTo(stanceWidth * dir, 0);
+        ctx.lineTo(12, -28);
+    } else if (isAttack) {
+        // Attack stance - wide stable base
+        const attackStance = isWindup ? 0 : (isSwing ? 8 : 4);
+        ctx.moveTo(-8, -35);
+        ctx.lineTo(-18 * dir - attackStance, 0);
+        ctx.lineTo(-8 * dir - attackStance, 0);
+        ctx.lineTo(2, -35);
+        ctx.moveTo(2, -35);
+        ctx.lineTo(12 * dir + attackStance, 0);
+        ctx.lineTo(22 * dir + attackStance, 0);
+        ctx.lineTo(12, -35);
     } else {
+        // Normal/Running - smoother leg animation
         ctx.moveTo(-5, -35);
-        ctx.lineTo(-15 * dir + legOffset, 0); 
+        ctx.lineTo(-15 * dir + legOffset, 0);
         ctx.lineTo(-5 * dir + legOffset, 0);
         ctx.lineTo(5, -35);
         ctx.moveTo(0, -35);
@@ -1041,50 +1189,77 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.fill();
 
     // --- ARMS ---
-    
-    // Left Arm
-    ctx.strokeStyle = '#3f2e0e'; 
-    ctx.lineWidth = 4;
+
+    // Left Arm (prosthetic arm)
+    ctx.strokeStyle = '#3f2e0e';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(-10 * dir, -60); 
-    if (state.state === 'BLOCK' || state.parryTimer > 0) {
-        ctx.lineTo(20 * dir, -75); 
+    ctx.moveTo(-10 * dir, -60);
+    if (isBlock) {
+        // Left hand grips lower handle - firm grip, closer to body
+        ctx.lineTo(8 * dir, -73);
     } else if (isThrust) {
          ctx.lineTo(10 * dir, -50); // Tucked
+    } else if (isAttack) {
+        // Left arm follows attack motion
+        if (isWindup) {
+            ctx.lineTo(-5 * dir, -55); // Pull back
+        } else if (isSwing) {
+            ctx.lineTo(18 * dir, -50); // Extend forward for balance
+        } else {
+            ctx.lineTo(10 * dir, -48); // Return
+        }
     } else {
         if (state.toolCooldown > 20 && state.state !== 'FLOATING_PASSAGE') {
-            ctx.lineTo(30 * dir, -60); 
+            ctx.lineTo(30 * dir, -60);
         } else {
-            ctx.lineTo(15 * dir, -45); 
+            ctx.lineTo(15 * dir, -45);
         }
     }
     ctx.stroke();
 
-    // Right Arm
-    ctx.strokeStyle = '#d97706'; 
-    ctx.lineWidth = 4;
+    // Right Arm (sword arm)
+    ctx.strokeStyle = '#d97706';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(10 * dir, -60);
-    if (state.state === 'ATTACK' || state.state === 'FLOATING_PASSAGE') {
+    if (isBlock) {
+        // Right hand grips upper handle - strong, stable position
+        ctx.lineTo(12 * dir, -85);
+    } else if (state.state === 'FLOATING_PASSAGE') {
          ctx.lineTo(25 * dir, -60);
+    } else if (isAttack) {
+        // Dynamic arm position during attack
+        if (isWindup) {
+            // Pull sword back high
+            ctx.lineTo(-8 * dir, -75);
+        } else if (isSwing) {
+            // Extend arm forward during swing
+            ctx.lineTo(35 * dir, -55);
+        } else {
+            // Recovery - arm forward but relaxing
+            ctx.lineTo(22 * dir, -58);
+        }
     } else if (isThrust) {
          ctx.lineTo(40 * dir, -60); // Reaching forward
     } else {
-         ctx.lineTo(-15 * dir, -45); 
+         ctx.lineTo(-15 * dir, -45);
     }
     ctx.stroke();
 
     // --- WEAPON ---
-    
-    if (state.state === 'ATTACK' || state.state === 'FLOATING_PASSAGE') {
-        ctx.strokeStyle = '#e4e4e7'; 
+
+    if (state.state === 'FLOATING_PASSAGE') {
+        // Floating Passage - rapid slashes
+        ctx.strokeStyle = '#e4e4e7';
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.moveTo(25 * dir, -60); 
-        // EXTENDED SWORD LENGTH (Was 75, now 85)
+        ctx.moveTo(25 * dir, -60);
         ctx.quadraticCurveTo(50 * dir, -65, 85 * dir, -50);
         ctx.stroke();
-        
+
         ctx.strokeStyle = '#18181b';
         ctx.lineWidth = 4;
         ctx.beginPath();
@@ -1096,16 +1271,83 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.lineWidth = 2;
         ctx.globalAlpha = 0.6;
         ctx.beginPath();
-        if (state.state === 'FLOATING_PASSAGE') {
-             ctx.arc(20 * dir, -60, 70, -Math.PI/2 + (frame*0.5), Math.PI + (frame*0.5), !state.facingRight);
-             ctx.moveTo(20 * dir, -60);
-             ctx.arc(20 * dir, -60, 50, -Math.PI, Math.PI, state.facingRight);
-        } else {
-             ctx.arc(20 * dir, -60, 60, -Math.PI/3, Math.PI/3, !state.facingRight);
-        }
+        ctx.arc(20 * dir, -60, 70, -Math.PI/2 + (frame*0.5), Math.PI + (frame*0.5), !state.facingRight);
+        ctx.moveTo(20 * dir, -60);
+        ctx.arc(20 * dir, -60, 50, -Math.PI, Math.PI, state.facingRight);
         ctx.stroke();
         ctx.globalAlpha = 1.0;
 
+    } else if (isAttack) {
+        // Dynamic attack animation
+        let swordX, swordY, swordEndX, swordEndY;
+
+        if (isWindup) {
+            // Sword pulled back and up
+            swordX = -8 * dir;
+            swordY = -75;
+            swordEndX = -25 * dir;
+            swordEndY = -95;
+        } else if (isSwing) {
+            // Sword swinging forward in arc
+            const swingProgress = (attackProgress - 0.3) / 0.4; // 0 to 1 during swing
+            const angle = (Math.PI * 0.9 * swingProgress) - Math.PI/3; // Swing arc
+            swordX = 35 * dir;
+            swordY = -55;
+            const swordLength = 90;
+            swordEndX = swordX + Math.cos(angle) * swordLength * dir;
+            swordEndY = swordY + Math.sin(angle) * swordLength;
+        } else {
+            // Recovery - sword forward
+            swordX = 22 * dir;
+            swordY = -58;
+            swordEndX = 75 * dir;
+            swordEndY = -45;
+        }
+
+        // Draw sword
+        ctx.strokeStyle = '#e4e4e7';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(swordX, swordY);
+        ctx.lineTo(swordEndX, swordEndY);
+        ctx.stroke();
+
+        // Sword handle
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 5;
+        const handleStartX = isWindup ? -8 * dir : (isSwing ? 35 * dir : 22 * dir);
+        const handleStartY = isWindup ? -75 : (isSwing ? -55 : -58);
+        ctx.beginPath();
+        ctx.moveTo(10 * dir, -60);
+        ctx.lineTo(handleStartX, handleStartY);
+        ctx.stroke();
+
+        // Sword trail effect during swing
+        if (isSwing) {
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 3;
+            ctx.globalAlpha = 0.3 + (attackProgress - 0.3) * 1.5;
+            ctx.beginPath();
+            // Create smooth arc trail
+            const trailRadius = 80;
+            const startAngle = -Math.PI/2;
+            const endAngle = Math.PI/4;
+            ctx.arc(10 * dir, -60, trailRadius, startAngle * dir, endAngle * dir, dir < 0);
+            ctx.stroke();
+            ctx.globalAlpha = 1.0;
+
+            // Speed lines for impact
+            if (attackProgress > 0.45 && attackProgress < 0.65) {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.lineWidth = 2;
+                for (let i = 0; i < 3; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(swordEndX - (10 * i * dir), swordEndY - (5 * i));
+                    ctx.lineTo(swordEndX + (15 * dir), swordEndY + 5);
+                    ctx.stroke();
+                }
+            }
+        }
     } else if (state.state === 'THRUST_CHARGE') {
         // Hold sword back
         ctx.strokeStyle = '#e4e4e7';
@@ -1144,34 +1386,138 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.moveTo(50 * dir, -55); ctx.lineTo(100 * dir, -55);
         ctx.stroke();
 
-    } else if (state.state === 'BLOCK' || state.parryTimer > 0) {
-        ctx.strokeStyle = '#e4e4e7';
-        ctx.lineWidth = 3;
+    } else if (isBlock) {
+        // Defensive guard position - stable vertical guard
+        const parryActive = state.parryTimer > 0;
+        const blockBreatheOffset = Math.sin(frame * 0.1) * 0.8; // Very subtle breathing
+
+        // Sword handle - centered in front of body
+        const handleBaseX = 10 * dir;
+        const handleBaseY = -73;
+        const handleTopX = 12 * dir;
+        const handleTopY = -85 + blockBreatheOffset;
+
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 7;
         ctx.beginPath();
-        ctx.moveTo(20 * dir, -75); 
-        ctx.lineTo(20 * dir, -110); 
-        ctx.stroke();
-        
-        ctx.strokeStyle = '#fbbf24'; 
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(15 * dir, -75);
-        ctx.lineTo(25 * dir, -75);
+        ctx.moveTo(handleBaseX, handleBaseY);
+        ctx.lineTo(handleTopX, handleTopY);
         ctx.stroke();
 
+        // Sword blade - nearly vertical with slight forward tilt (20 degrees from vertical)
+        const swordStartX = handleTopX;
+        const swordStartY = handleTopY;
+        const swordLength = 75;
+        const tiltFromVertical = Math.PI / 9; // ~20 degrees tilt forward from vertical
+        const verticalAngle = -Math.PI / 2; // -90 degrees (straight up)
+        const defenseAngle = verticalAngle + (tiltFromVertical * dir); // Tilt forward
+
+        const swordEndX = swordStartX + Math.cos(defenseAngle) * swordLength;
+        const swordEndY = swordStartY + Math.sin(defenseAngle) * swordLength;
+
+        // Sword blade - main body
+        ctx.strokeStyle = '#e4e4e7';
+        ctx.lineWidth = 4.5;
+        ctx.beginPath();
+        ctx.moveTo(swordStartX, swordStartY);
+        ctx.lineTo(swordEndX, swordEndY);
+        ctx.stroke();
+
+        // Sword edge highlight (sharp edge facing enemy)
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.8;
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath();
+        const edgeOffsetX = Math.cos(defenseAngle + Math.PI/2) * 1.5 * dir;
+        const edgeOffsetY = Math.sin(defenseAngle + Math.PI/2) * 1.5;
+        ctx.moveTo(swordStartX + edgeOffsetX, swordStartY + edgeOffsetY);
+        ctx.lineTo(swordEndX + edgeOffsetX, swordEndY + edgeOffsetY);
+        ctx.stroke();
+        ctx.globalAlpha = 1.0;
+
+        // Sword tip (pointed)
+        ctx.fillStyle = '#fff';
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath();
+        ctx.arc(swordEndX, swordEndY, 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+
+        // Guard tsuba (sword guard) - larger, more prominent
+        ctx.fillStyle = '#fbbf24';
+        ctx.strokeStyle = '#78350f';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(handleTopX, handleTopY, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Only show parry effects during parry window
+        if (parryActive) {
+            const parryIntensity = state.parryTimer / PARRY_WINDOW;
+            const shieldCenterX = handleTopX + dir * 8;
+            const shieldCenterY = handleTopY - 15;
+            const shieldRadius = 35;
+
+            // Parry glow - golden rings
+            ctx.strokeStyle = '#fcd34d';
+            ctx.lineWidth = 3;
+            ctx.globalAlpha = parryIntensity * 0.9;
+            ctx.beginPath();
+            ctx.arc(shieldCenterX, shieldCenterY, shieldRadius - 5, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Outer pulse ring
+            ctx.strokeStyle = '#fef3c7';
+            ctx.lineWidth = 2;
+            ctx.globalAlpha = parryIntensity * 0.6;
+            const pulseSize = shieldRadius + (1 - parryIntensity) * 15;
+            ctx.beginPath();
+            ctx.arc(shieldCenterX, shieldCenterY, pulseSize, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Energy particles around sword (only during parry window)
+            for (let i = 0; i < 3; i++) {
+                const particleAngle = (frame * 0.1 + i * Math.PI * 2 / 3);
+                const px = shieldCenterX + Math.cos(particleAngle) * (shieldRadius - 8);
+                const py = shieldCenterY + Math.sin(particleAngle) * (shieldRadius - 8);
+                ctx.fillStyle = '#fbbf24';
+                ctx.globalAlpha = parryIntensity * 0.8;
+                ctx.beginPath();
+                ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.globalAlpha = 1.0;
+        }
     } else {
-        ctx.strokeStyle = '#18181b'; 
-        ctx.lineWidth = 4;
+        // Idle/sheathed stance
+        // Scabbard on back
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 5;
         ctx.beginPath();
         ctx.moveTo(-15 * dir, -45);
-        ctx.lineTo(-45 * dir, -60); 
+        ctx.lineTo(-48 * dir, -62);
         ctx.stroke();
-        
-        ctx.strokeStyle = '#fff'; 
+
+        // Sword blade (partially visible)
+        ctx.strokeStyle = '#e4e4e7';
+        ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(-15 * dir, -45);
-        ctx.lineTo(0, -40);
+        ctx.lineTo(-12 * dir, -43);
         ctx.stroke();
+
+        // Breathing animation - subtle sword bob
+        const breatheOffset = Math.sin(frame * 0.08) * 1.5;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(-15 * dir, -45 + breatheOffset);
+        ctx.lineTo(0, -40 + breatheOffset);
+        ctx.stroke();
+        ctx.globalAlpha = 1.0;
     }
 
     ctx.restore();
@@ -1398,8 +1744,49 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.fill();
         ctx.globalAlpha = 1.0;
     }
-    
+
+    // Motion blur for fast movement
+    if (Math.abs(player.vx) > 3 && player.state !== 'DASH') {
+        ctx.save();
+        ctx.globalAlpha = 0.2;
+        ctx.translate(-player.vx * 1.5, 0);
+        drawWolf(ctx, player.x, player.y, player.width, player.height, player, frame);
+        ctx.restore();
+    }
+
+    // Attack afterimage
+    if (player.state === 'ATTACK' && player.attackTimer > 8 && player.attackTimer < 15) {
+        ctx.save();
+        ctx.globalAlpha = 0.15;
+        const prevFrame = frame - 2;
+        drawWolf(ctx, player.x, player.y, player.width, player.height, player, prevFrame);
+        ctx.restore();
+    }
+
     drawWolf(ctx, player.x, player.y, player.width, player.height, player, frame);
+
+    // Only show effects during parry window, not continuous blocking
+    if (player.parryTimer > 0) {
+       const parryIntensity = player.parryTimer / PARRY_WINDOW;
+
+       // Golden parry aura (only during parry window)
+       ctx.fillStyle = 'rgba(252, 211, 77, 0.15)';
+       ctx.globalAlpha = parryIntensity * 0.6;
+       ctx.beginPath();
+       const glowSize = 50 + parryIntensity * 20;
+       ctx.arc(player.x + player.width/2, player.y + player.height/2 - 10, glowSize, 0, Math.PI*2);
+       ctx.fill();
+       ctx.globalAlpha = 1.0;
+
+       // Parry ready indicator - ground ring (only during parry window)
+       ctx.strokeStyle = '#fbbf24';
+       ctx.lineWidth = 2;
+       ctx.globalAlpha = parryIntensity * 0.7;
+       ctx.beginPath();
+       ctx.ellipse(player.x + player.width/2, player.y + player.height + 5, 20, 5, 0, 0, Math.PI * 2);
+       ctx.stroke();
+       ctx.globalAlpha = 1.0;
+    }
 
     if (player.state === 'HEAL') {
        ctx.fillStyle = '#22c55e';
