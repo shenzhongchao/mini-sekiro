@@ -60,7 +60,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     inputBuffer: { parry: 0 },
     particles: [] as { x: number; y: number; vx: number; vy: number; life: number; color: string }[],
     shockwaves: [] as { x: number; y: number; radius: number; alpha: number }[],
-    projectiles: [] as { x: number; y: number; vx: number; vy: number; life: number; rotation: number }[],
+    projectiles: [] as { x: number; y: number; vx: number; vy: number; life: number; rotation: number; owner: 'player' | 'boss' }[],
     sakura: [] as { x: number; y: number; vx: number; vy: number; size: number; swayOffset: number; color: string }[], 
     player: {
       x: 100,
@@ -439,7 +439,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         if (propsRef.current.consumeEmblem(1)) {
             setLog("义手忍具：手里剑");
             playCombatSound('THROW');
-            player.toolCooldown = 30; 
+            player.toolCooldown = 30;
             const dir = player.facingRight ? 1 : -1;
             state.projectiles.push({
                 x: player.x + player.width/2 + (20*dir),
@@ -447,7 +447,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                 vx: dir * 15,
                 vy: 0,
                 life: 60,
-                rotation: 0
+                rotation: 0,
+                owner: 'player'
             });
             controls.current.shuriken = false;
         } else {
@@ -534,28 +535,32 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     for (let i = state.projectiles.length - 1; i >= 0; i--) {
         const p = state.projectiles[i];
         p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.15; // Gravity effect on shuriken
         p.rotation += 0.5;
         p.life--;
-        
+
         const pRect = { x: p.x - 5, y: p.y - 5, width: 10, height: 10 };
-        if (checkCollision(pRect, boss)) {
+
+        // Player's shuriken hitting boss
+        if (p.owner === 'player' && checkCollision(pRect, boss)) {
             const canBlock = boss.state === 'IDLE' || boss.state === 'PACE' || boss.state === 'BLOCK' || boss.state === 'RECOVER';
-            const blockChance = Math.min(0.95, 0.2 + (level * 0.05)); 
+            const blockChance = Math.min(0.95, 0.2 + (level * 0.05));
 
             if (canBlock && Math.random() < blockChance) {
-                playCombatSound('BLOCK'); 
-                spawnSparks(p.x, p.y, 5, '#a1a1aa'); 
+                playCombatSound('BLOCK');
+                spawnSparks(p.x, p.y, 5, '#a1a1aa');
                 setLog("BOSS: 格挡手里剑");
                 boss.state = 'BLOCK';
                 boss.attackTimer = 20;
                 boss.vx = 0;
-                boss.posture += 0.5; 
+                boss.posture += 0.5;
             } else {
                 playCombatSound('CLINK');
                 spawnSparks(p.x, p.y, 5, '#60a5fa');
                 boss.hp -= Math.max(1, playerStats.attackPower * 0.3);
                 boss.posture += 0.5;
-                boss.postureRecoveryTimer = 120; 
+                boss.postureRecoveryTimer = 120;
                 if (boss.state === 'PACE') {
                     boss.state = 'IDLE';
                     boss.attackTimer = 10;
@@ -565,7 +570,45 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             state.projectiles.splice(i, 1);
             continue;
         }
-        if (p.life <= 0 || p.x < 0 || p.x > 800) {
+
+        // Boss's shuriken hitting player
+        if (p.owner === 'boss' && checkCollision(pRect, player)) {
+            // Player can block, parry, or dodge boss shuriken
+            let dodged = player.state === 'DASH';
+
+            if (dodged) {
+                setLog("闪避手里剑！");
+                spawnDashTrail(player);
+            } else if (player.parryTimer > 0) {
+                // Perfect parry deflects shuriken
+                setLog("弹反手里剑！");
+                playCombatSound('PARRY');
+                spawnSparks(p.x, p.y, 15, '#fcd34d');
+                state.parrySuccessTimer = 20;
+                // Deflect back
+                p.vx = -p.vx * 1.2;
+                p.owner = 'player'; // Now it's player's projectile
+                continue;
+            } else if (controls.current.block) {
+                // Block shuriken
+                setLog("格挡手里剑");
+                playCombatSound('BLOCK');
+                spawnSparks(p.x, p.y, 8, '#a1a1aa');
+                player.posture += 10;
+            } else {
+                // Hit by shuriken
+                playCombatSound('HIT');
+                spawnSparks(player.x, player.y, 10, '#ef4444');
+                const dmg = bossData.stats.damage * 0.4;
+                player.hp -= dmg;
+                player.posture += 5;
+                setLog("被手里剑命中！");
+            }
+            state.projectiles.splice(i, 1);
+            continue;
+        }
+
+        if (p.life <= 0 || p.x < 0 || p.x > 800 || p.y > GROUND_Y + 100) {
             state.projectiles.splice(i, 1);
         }
     }
@@ -653,21 +696,45 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     if (boss.state === 'IDLE') {
       if (boss.attackTimer > 0) boss.attackTimer--;
       if (boss.attackTimer <= 0) {
+         // Shuriken attack - mid range (150-350 pixels)
+         if (dist >= 150 && dist <= 350 && Math.random() < 0.15 + (level * 0.01)) {
+             setLog("BOSS: 手里剑！");
+             playCombatSound('THROW');
+             const dir = boss.faceRight ? 1 : -1;
+             // Boss throws 1-3 shuriken based on level
+             const shurikenCount = level > 10 ? 3 : (level > 5 ? 2 : 1);
+             for (let i = 0; i < shurikenCount; i++) {
+                 setTimeout(() => {
+                     state.projectiles.push({
+                         x: boss.x + boss.width/2 + (25*dir),
+                         y: boss.y + 30,
+                         vx: dir * (13 + Math.random() * 4),
+                         vy: (Math.random() - 0.5) * 2, // Slight vertical variation
+                         life: 80,
+                         rotation: 0,
+                         owner: 'boss'
+                     });
+                 }, i * 150); // Stagger throws
+             }
+             boss.attackTimer = 60; // Cooldown
+             return;
+         }
+
          if (dist > 350 && Math.random() < 0.4) {
              boss.state = 'WINDUP';
              boss.attackType = 'HEAVY';
              boss.maxWindup = 45;
              boss.attackTimer = 45;
-             boss.vy = -12; 
-             boss.vx = (boss.faceRight ? 1 : -1) * 10; 
+             boss.vy = -12;
+             boss.vx = (boss.faceRight ? 1 : -1) * 10;
              setLog("BOSS: 飞身跃入");
              spawnDashTrail(boss);
-             return; 
+             return;
          }
 
-         if (dist < 300 && dist > 80 && Math.random() < 0.35 && boss.paceTimer <= 0) { 
+         if (dist < 300 && dist > 80 && Math.random() < 0.35 && boss.paceTimer <= 0) {
             boss.state = 'PACE';
-            boss.paceTimer = 40 + Math.random() * 40; 
+            boss.paceTimer = 40 + Math.random() * 40;
          }
          else if (dist < 250 && Math.random() < bossData.stats.aggression) {
             boss.state = 'WINDUP';
@@ -1214,8 +1281,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     const leftArmStart = isBlock ? -55 : -60;
     ctx.moveTo(-10 * dir, leftArmStart);
     if (isBlock) {
-        // Left hand holding lower part of sword, more forward position
-        ctx.lineTo(12 * dir, -38);
+        // Left hand holding lower tsuka (handle)
+        ctx.lineTo(14 * dir, -18);
     } else if (isThrust) {
          ctx.lineTo(10 * dir, -50); // Tucked
     } else if (isAttack) {
@@ -1244,8 +1311,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     const rightArmStart = isBlock ? -55 : -60;
     ctx.moveTo(10 * dir, rightArmStart);
     if (isBlock) {
-        // Right hand holding upper part of sword, extended forward
-        ctx.lineTo(15 * dir, -48);
+        // Right hand holding upper tsuka near tsuba
+        ctx.lineTo(14 * dir, -35);
     } else if (state.state === 'FLOATING_PASSAGE') {
          ctx.lineTo(25 * dir, -60);
     } else if (isAttack) {
@@ -1405,18 +1472,90 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.stroke();
 
     } else if (isBlock) {
-        // Block stance - defensive guard position
-        const handX = 14 * dir; // More forward position
-        const handY = -43; // Lower to match lowered stance
-        const bladeLength = 60; // Match sword length to idle/attack stance
+        // Block stance - defensive guard position with detailed katana
+        const handX = 14 * dir;
+        const handY = -43;
+        const bladeLength = 55;
 
-        // Vertical sword blade - slightly angled forward for more realistic guard
-        ctx.strokeStyle = '#e5e7eb';
-        ctx.lineWidth = 6;
+        // === KATANA DRAWING ===
+
+        // Blade back (spine/mune) - darker
+        ctx.strokeStyle = '#9ca3af';
+        ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.moveTo(handX, handY + 10);
-        ctx.lineTo(handX + (2 * dir), handY - bladeLength); // Slight forward angle
+        ctx.moveTo(handX + (3 * dir), handY + 5);
+        // Slight curve for katana shape
+        ctx.quadraticCurveTo(
+            handX + (5 * dir), handY - bladeLength/2,
+            handX + (4 * dir), handY - bladeLength
+        );
         ctx.stroke();
+
+        // Blade edge (ha) - bright steel
+        ctx.strokeStyle = '#f4f4f5';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(handX + (1 * dir), handY + 5);
+        ctx.quadraticCurveTo(
+            handX + (2 * dir), handY - bladeLength/2,
+            handX + (2 * dir), handY - bladeLength
+        );
+        ctx.stroke();
+
+        // Blade highlight (shinogi line)
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.6;
+        ctx.beginPath();
+        ctx.moveTo(handX + (2 * dir), handY);
+        ctx.quadraticCurveTo(
+            handX + (3 * dir), handY - bladeLength/2,
+            handX + (3 * dir), handY - bladeLength + 5
+        );
+        ctx.stroke();
+        ctx.globalAlpha = 1.0;
+
+        // Kissaki (blade tip) - pointed shape
+        ctx.fillStyle = '#e5e7eb';
+        ctx.beginPath();
+        ctx.moveTo(handX + (1 * dir), handY - bladeLength);
+        ctx.lineTo(handX + (4 * dir), handY - bladeLength);
+        ctx.lineTo(handX + (2 * dir), handY - bladeLength - 8); // Tip point
+        ctx.closePath();
+        ctx.fill();
+
+        // Habaki (blade collar)
+        ctx.fillStyle = '#d4af37';
+        ctx.fillRect(handX - (1 * dir), handY + 3, 6 * dir, 6);
+
+        // Tsuba (guard) - circular
+        ctx.fillStyle = '#1f2937';
+        ctx.strokeStyle = '#d4af37';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.ellipse(handX + (2 * dir), handY + 10, 8, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Tsuka (handle wrap pattern)
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(handX + (1 * dir), handY + 12);
+        ctx.lineTo(handX + (1 * dir), handY + 28);
+        ctx.stroke();
+
+        // Handle wrap diamonds (menuki style)
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.arc(handX + (1 * dir), handY + 18, 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Kashira (pommel)
+        ctx.fillStyle = '#1f2937';
+        ctx.beginPath();
+        ctx.ellipse(handX + (1 * dir), handY + 30, 4, 3, 0, 0, Math.PI * 2);
+        ctx.fill();
     } else {
         // Idle/sheathed stance
         // Scabbard on back
@@ -1736,7 +1875,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.save();
         ctx.translate(p.x, p.y);
         ctx.rotate(p.rotation);
-        ctx.fillStyle = '#e5e7eb'; 
+        // Different colors for player and boss shuriken
+        ctx.fillStyle = p.owner === 'player' ? '#e5e7eb' : '#dc2626';
         ctx.beginPath();
         for (let i = 0; i < 4; i++) {
             ctx.rotate(Math.PI / 2);
