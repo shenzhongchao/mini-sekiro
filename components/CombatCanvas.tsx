@@ -53,13 +53,14 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
   const gameState = useRef({
     frame: 0,
     gameOver: false,
-    hitStop: 0, 
-    shake: 0, 
-    flashIntensity: 0, 
-    inputBuffer: { parry: 0 }, 
+    hitStop: 0,
+    shake: 0,
+    flashIntensity: 0,
+    parrySuccessTimer: 0, // Timer for parry success visual effect
+    inputBuffer: { parry: 0 },
     particles: [] as { x: number; y: number; vx: number; vy: number; life: number; color: string }[],
-    shockwaves: [] as { x: number; y: number; radius: number; alpha: number }[], 
-    projectiles: [] as { x: number; y: number; vx: number; vy: number; life: number; rotation: number }[], 
+    shockwaves: [] as { x: number; y: number; radius: number; alpha: number }[],
+    projectiles: [] as { x: number; y: number; vx: number; vy: number; life: number; rotation: number }[],
     sakura: [] as { x: number; y: number; vx: number; vy: number; size: number; swayOffset: number; color: string }[], 
     player: {
       x: 100,
@@ -255,6 +256,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     state.frame++;
     if (state.shake > 0) state.shake *= 0.9;
     if (state.flashIntensity > 0) state.flashIntensity -= 0.1;
+    if (state.parrySuccessTimer > 0) state.parrySuccessTimer--;
 
     // Auto-reset combo counter if boss hasn't been hit recently
     const COMBO_RESET_WINDOW = 120; // 2 seconds
@@ -352,21 +354,28 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         const canMove = player.state !== 'HIT' && player.state !== 'ATTACK' && player.state !== 'HEAL' && player.state !== 'FLOATING_PASSAGE' && player.state !== 'THRUST_CHARGE';
 
         if (canMove) {
-            if (controls.current.left) { 
-                player.vx -= 0.8; 
-                if (player.vx < -WALK_SPEED) player.vx = -WALK_SPEED; 
-                player.facingRight = false; 
+            // Slower movement when blocking
+            const moveSpeed = controls.current.block ? WALK_SPEED * 0.5 : WALK_SPEED;
+            const accel = controls.current.block ? 0.5 : 0.8;
+
+            if (controls.current.left) {
+                player.vx -= accel;
+                if (player.vx < -moveSpeed) player.vx = -moveSpeed;
+                player.facingRight = false;
             }
-            if (controls.current.right) { 
-                player.vx += 0.8;
-                if (player.vx > WALK_SPEED) player.vx = WALK_SPEED;
-                player.facingRight = true; 
+            if (controls.current.right) {
+                player.vx += accel;
+                if (player.vx > moveSpeed) player.vx = moveSpeed;
+                player.facingRight = true;
             }
-            
-            if (Math.abs(player.vx) > 0.5) {
-                player.state = 'RUN';
-            } else {
-                player.state = 'IDLE';
+
+            // Don't change state if blocking
+            if (!controls.current.block) {
+                if (Math.abs(player.vx) > 0.5) {
+                    player.state = 'RUN';
+                } else {
+                    player.state = 'IDLE';
+                }
             }
 
             if (controls.current.jump && player.y === GROUND_Y) {
@@ -798,10 +807,11 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
              } else if (player.parryTimer > 0) {
                setLog("完美弹反！");
                playCombatSound('PARRY');
-               spawnSparks((player.x + boss.x)/2, player.y + 30, 50, '#fcd34d'); 
-               triggerShake(20); 
-               triggerHitStop(12); 
-               state.flashIntensity = 0.8; 
+               spawnSparks((player.x + boss.x)/2, player.y + 30, 50, '#fcd34d');
+               triggerShake(20);
+               triggerHitStop(12);
+               state.flashIntensity = 0.8;
+               state.parrySuccessTimer = 30; // Show golden aura for 30 frames (0.5 seconds)
                state.shockwaves.push({
                    x: (player.x + boss.x)/2,
                    y: player.y + 30,
@@ -812,10 +822,11 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                player.vx = player.facingRight ? -3 : 3;
                boss.vx = boss.faceRight ? -2 : 2;
 
-               boss.posture += (4 + (level * 0.5)) * (boss.attackType === 'HEAVY' ? 1.5 : 1.0);
-               
-               player.posture += 20; 
-               if (player.posture > player.maxPosture) player.posture = player.maxPosture - 1; 
+               // Perfect parry: Boss takes massive posture damage, player takes none
+               const parryPostureDamage = (15 + (level * 1.0)) * (boss.attackType === 'HEAVY' ? 2.0 : 1.0);
+               boss.posture += parryPostureDamage;
+
+               // Player posture does not increase on perfect parry
 
                if (boss.attackType === 'HEAVY') {
                   boss.state = 'RECOVER';
@@ -1063,7 +1074,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     const isRun = state.state === 'RUN';
     const isAttack = state.state === 'ATTACK';
-    const isBlock = state.state === 'BLOCK' || state.parryTimer > 0;
+    const isBlock = state.state === 'BLOCK' || state.parryTimer > 0 || (controls.current.block && state.state !== 'HIT' && state.state !== 'ATTACK' && state.state !== 'HEAL' && state.state !== 'FLOATING_PASSAGE' && state.state !== 'THRUST_CHARGE' && state.state !== 'THRUST_RELEASE' && state.state !== 'DASH');
     const isThrust = state.state === 'THRUST_CHARGE' || state.state === 'THRUST_RELEASE';
     const dir = state.facingRight ? 1 : -1;
 
@@ -1075,17 +1086,14 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     // Body tilt during movement and attacks
     let bodyTilt = 0;
-    if (isRun) {
+    if (isRun && !isBlock) {
       bodyTilt = Math.sin(frame * 0.4) * 0.05 * dir;
     }
     if (isAttack && isSwing) {
       // Lean forward during swing
       bodyTilt = dir * 0.1;
     }
-    if (isBlock) {
-      // Slight forward lean in defensive stance - ready to counter
-      bodyTilt = dir * 0.02;
-    }
+    // No tilt during block - stable stance
 
     ctx.rotate(bodyTilt);
 
@@ -1097,7 +1105,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     // --- LEGS ---
     ctx.fillStyle = '#3f3f46';
-    const legOffset = isRun ? Math.sin(frame * 0.4) * 12 : 0;
+    const legOffset = (isRun && !isBlock) ? Math.sin(frame * 0.4) * 12 : 0;
     const legSpeed = Math.abs(state.vx) * 2; // Leg animation speed based on velocity
 
     ctx.beginPath();
@@ -1113,16 +1121,15 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.lineTo(30 * dir, 0);
         ctx.lineTo(15, -35);
     } else if (isBlock) {
-        // Defensive stance - low center of gravity, feet shoulder-width apart
-        const stanceWidth = 28; // Wider than normal for stability
-        ctx.moveTo(-12, -28); // Lower hip position for deeper crouch
-        ctx.lineTo(-stanceWidth * dir, 0);
-        ctx.lineTo(-18 * dir, 0);
-        ctx.lineTo(-2, -28);
-        ctx.moveTo(2, -28);
-        ctx.lineTo(18 * dir, 0);
-        ctx.lineTo(stanceWidth * dir, 0);
-        ctx.lineTo(12, -28);
+        // Simplified guard stance - stable, natural standing position
+        ctx.moveTo(-5, -35);
+        ctx.lineTo(-12 * dir, 0);
+        ctx.lineTo(-5 * dir, 0);
+        ctx.lineTo(5, -35);
+        ctx.moveTo(0, -35);
+        ctx.lineTo(8 * dir, 0);
+        ctx.lineTo(15 * dir, 0);
+        ctx.lineTo(10, -35);
     } else if (isAttack) {
         // Attack stance - wide stable base
         const attackStance = isWindup ? 0 : (isSwing ? 8 : 4);
@@ -1197,8 +1204,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.beginPath();
     ctx.moveTo(-10 * dir, -60);
     if (isBlock) {
-        // Left hand grips lower handle - firm grip, closer to body
-        ctx.lineTo(8 * dir, -73);
+        // Left hand holding lower part of sword
+        ctx.lineTo(8 * dir, -40);
     } else if (isThrust) {
          ctx.lineTo(10 * dir, -50); // Tucked
     } else if (isAttack) {
@@ -1226,8 +1233,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.beginPath();
     ctx.moveTo(10 * dir, -60);
     if (isBlock) {
-        // Right hand grips upper handle - strong, stable position
-        ctx.lineTo(12 * dir, -85);
+        // Right hand holding upper part of sword
+        ctx.lineTo(8 * dir, -55);
     } else if (state.state === 'FLOATING_PASSAGE') {
          ctx.lineTo(25 * dir, -60);
     } else if (isAttack) {
@@ -1387,109 +1394,18 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.stroke();
 
     } else if (isBlock) {
-        // Defensive guard position - stable vertical guard
-        const parryActive = state.parryTimer > 0;
-        const blockBreatheOffset = Math.sin(frame * 0.1) * 0.8; // Very subtle breathing
+        // Block stance - simple guard without aura
+        const handX = 8 * dir;
+        const handY = -50;
+        const bladeLength = 60; // Match sword length to idle/attack stance
 
-        // Sword handle - centered in front of body
-        const handleBaseX = 10 * dir;
-        const handleBaseY = -73;
-        const handleTopX = 12 * dir;
-        const handleTopY = -85 + blockBreatheOffset;
-
-        ctx.strokeStyle = '#18181b';
-        ctx.lineWidth = 7;
+        // Vertical sword blade
+        ctx.strokeStyle = '#e5e7eb';
+        ctx.lineWidth = 6;
         ctx.beginPath();
-        ctx.moveTo(handleBaseX, handleBaseY);
-        ctx.lineTo(handleTopX, handleTopY);
+        ctx.moveTo(handX, handY + 15);
+        ctx.lineTo(handX, handY - bladeLength);
         ctx.stroke();
-
-        // Sword blade - nearly vertical with slight forward tilt (20 degrees from vertical)
-        const swordStartX = handleTopX;
-        const swordStartY = handleTopY;
-        const swordLength = 75;
-        const tiltFromVertical = Math.PI / 9; // ~20 degrees tilt forward from vertical
-        const verticalAngle = -Math.PI / 2; // -90 degrees (straight up)
-        const defenseAngle = verticalAngle + (tiltFromVertical * dir); // Tilt forward
-
-        const swordEndX = swordStartX + Math.cos(defenseAngle) * swordLength;
-        const swordEndY = swordStartY + Math.sin(defenseAngle) * swordLength;
-
-        // Sword blade - main body
-        ctx.strokeStyle = '#e4e4e7';
-        ctx.lineWidth = 4.5;
-        ctx.beginPath();
-        ctx.moveTo(swordStartX, swordStartY);
-        ctx.lineTo(swordEndX, swordEndY);
-        ctx.stroke();
-
-        // Sword edge highlight (sharp edge facing enemy)
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 1.8;
-        ctx.globalAlpha = 0.5;
-        ctx.beginPath();
-        const edgeOffsetX = Math.cos(defenseAngle + Math.PI/2) * 1.5 * dir;
-        const edgeOffsetY = Math.sin(defenseAngle + Math.PI/2) * 1.5;
-        ctx.moveTo(swordStartX + edgeOffsetX, swordStartY + edgeOffsetY);
-        ctx.lineTo(swordEndX + edgeOffsetX, swordEndY + edgeOffsetY);
-        ctx.stroke();
-        ctx.globalAlpha = 1.0;
-
-        // Sword tip (pointed)
-        ctx.fillStyle = '#fff';
-        ctx.globalAlpha = 0.7;
-        ctx.beginPath();
-        ctx.arc(swordEndX, swordEndY, 2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-
-        // Guard tsuba (sword guard) - larger, more prominent
-        ctx.fillStyle = '#fbbf24';
-        ctx.strokeStyle = '#78350f';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(handleTopX, handleTopY, 5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-
-        // Only show parry effects during parry window
-        if (parryActive) {
-            const parryIntensity = state.parryTimer / PARRY_WINDOW;
-            const shieldCenterX = handleTopX + dir * 8;
-            const shieldCenterY = handleTopY - 15;
-            const shieldRadius = 35;
-
-            // Parry glow - golden rings
-            ctx.strokeStyle = '#fcd34d';
-            ctx.lineWidth = 3;
-            ctx.globalAlpha = parryIntensity * 0.9;
-            ctx.beginPath();
-            ctx.arc(shieldCenterX, shieldCenterY, shieldRadius - 5, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // Outer pulse ring
-            ctx.strokeStyle = '#fef3c7';
-            ctx.lineWidth = 2;
-            ctx.globalAlpha = parryIntensity * 0.6;
-            const pulseSize = shieldRadius + (1 - parryIntensity) * 15;
-            ctx.beginPath();
-            ctx.arc(shieldCenterX, shieldCenterY, pulseSize, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // Energy particles around sword (only during parry window)
-            for (let i = 0; i < 3; i++) {
-                const particleAngle = (frame * 0.1 + i * Math.PI * 2 / 3);
-                const px = shieldCenterX + Math.cos(particleAngle) * (shieldRadius - 8);
-                const py = shieldCenterY + Math.sin(particleAngle) * (shieldRadius - 8);
-                ctx.fillStyle = '#fbbf24';
-                ctx.globalAlpha = parryIntensity * 0.8;
-                ctx.beginPath();
-                ctx.arc(px, py, 2.5, 0, Math.PI * 2);
-                ctx.fill();
-            }
-
-            ctx.globalAlpha = 1.0;
-        }
     } else {
         // Idle/sheathed stance
         // Scabbard on back
@@ -1765,25 +1681,25 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     drawWolf(ctx, player.x, player.y, player.width, player.height, player, frame);
 
-    // Only show effects during parry window, not continuous blocking
-    if (player.parryTimer > 0) {
-       const parryIntensity = player.parryTimer / PARRY_WINDOW;
+    // Show golden aura only on successful parry
+    if (gameState.current.parrySuccessTimer > 0) {
+       const successIntensity = gameState.current.parrySuccessTimer / 30; // 30 frames total
 
-       // Golden parry aura (only during parry window)
-       ctx.fillStyle = 'rgba(252, 211, 77, 0.15)';
-       ctx.globalAlpha = parryIntensity * 0.6;
+       // Golden parry aura
+       ctx.fillStyle = 'rgba(252, 211, 77, 0.3)';
+       ctx.globalAlpha = successIntensity * 0.8;
        ctx.beginPath();
-       const glowSize = 50 + parryIntensity * 20;
+       const glowSize = 60 + (1 - successIntensity) * 30;
        ctx.arc(player.x + player.width/2, player.y + player.height/2 - 10, glowSize, 0, Math.PI*2);
        ctx.fill();
        ctx.globalAlpha = 1.0;
 
-       // Parry ready indicator - ground ring (only during parry window)
+       // Expanding golden ring
        ctx.strokeStyle = '#fbbf24';
-       ctx.lineWidth = 2;
-       ctx.globalAlpha = parryIntensity * 0.7;
+       ctx.lineWidth = 3;
+       ctx.globalAlpha = successIntensity * 0.9;
        ctx.beginPath();
-       ctx.ellipse(player.x + player.width/2, player.y + player.height + 5, 20, 5, 0, 0, Math.PI * 2);
+       ctx.arc(player.x + player.width/2, player.y + player.height/2 - 10, 40 + (1 - successIntensity) * 40, 0, Math.PI*2);
        ctx.stroke();
        ctx.globalAlpha = 1.0;
     }
