@@ -1093,7 +1093,10 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       // Lean forward during swing
       bodyTilt = dir * 0.1;
     }
-    // No tilt during block - stable stance
+    if (isBlock) {
+      // Slight forward lean during defensive stance for better balance
+      bodyTilt = dir * 0.05;
+    }
 
     ctx.rotate(bodyTilt);
 
@@ -1121,15 +1124,17 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.lineTo(30 * dir, 0);
         ctx.lineTo(15, -35);
     } else if (isBlock) {
-        // Simplified guard stance - stable, natural standing position
-        ctx.moveTo(-5, -35);
-        ctx.lineTo(-12 * dir, 0);
-        ctx.lineTo(-5 * dir, 0);
-        ctx.lineTo(5, -35);
-        ctx.moveTo(0, -35);
-        ctx.lineTo(8 * dir, 0);
-        ctx.lineTo(15 * dir, 0);
-        ctx.lineTo(10, -35);
+        // Defensive stance - one foot forward, lowered center of gravity
+        // Back leg (stable)
+        ctx.moveTo(-8, -30); // Body slightly lower
+        ctx.lineTo(-18 * dir, 0);
+        ctx.lineTo(-10 * dir, 0);
+        ctx.lineTo(-2, -30);
+        // Front leg (forward)
+        ctx.moveTo(3, -30);
+        ctx.lineTo(22 * dir, 0);
+        ctx.lineTo(30 * dir, 0);
+        ctx.lineTo(10, -30);
     } else if (isAttack) {
         // Attack stance - wide stable base
         const attackStance = isWindup ? 0 : (isSwing ? 8 : 4);
@@ -1155,43 +1160,47 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.fill();
 
     // --- BODY ---
-    ctx.fillStyle = '#d97706'; 
+    ctx.fillStyle = '#d97706';
     ctx.beginPath();
-    ctx.moveTo(-12, -35);
-    ctx.lineTo(12, -35);
-    ctx.lineTo(15, -65); 
-    ctx.lineTo(-15, -65); 
+    const bodyLower = isBlock ? -30 : -35; // Lower body position when blocking
+    const bodyUpper = isBlock ? -60 : -65;
+    ctx.moveTo(-12, bodyLower);
+    ctx.lineTo(12, bodyLower);
+    ctx.lineTo(15, bodyUpper);
+    ctx.lineTo(-15, bodyUpper);
     ctx.fill();
 
     ctx.fillStyle = '#18181b';
-    ctx.fillRect(-12, -40, 24, 5);
+    ctx.fillRect(-12, bodyLower - 5, 24, 5);
 
     // Scarf
-    ctx.strokeStyle = '#e4e4e7'; 
+    ctx.strokeStyle = '#e4e4e7';
     ctx.lineWidth = 5;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(-5 * dir, -63);
+    const scarfY = isBlock ? -58 : -63;
+    ctx.moveTo(-5 * dir, scarfY);
     const wave = Math.sin(frame * 0.15) * 10;
     const speedTilt = state.vx * 3;
     ctx.bezierCurveTo(
-        -20 * dir - speedTilt, -60 + wave, 
-        -30 * dir - speedTilt, -40 - wave, 
-        -35 * dir - speedTilt, -20 + wave
+        -20 * dir - speedTilt, scarfY + 3 + wave,
+        -30 * dir - speedTilt, scarfY + 23 - wave,
+        -35 * dir - speedTilt, scarfY + 43 + wave
     );
     ctx.stroke();
 
     // --- HEAD ---
-    ctx.fillStyle = '#fecaca'; 
+    const headY = isBlock ? -65 : -70; // Lower head when blocking
+    ctx.fillStyle = '#fecaca';
     ctx.beginPath();
-    ctx.arc(0, -70, 9, 0, Math.PI*2);
+    ctx.arc(0, headY, 9, 0, Math.PI*2);
     ctx.fill();
-    
+
     ctx.fillStyle = '#09090b';
     ctx.beginPath();
-    ctx.arc(0, -73, 10, Math.PI, 0); 
-    ctx.moveTo(0, -78); 
-    ctx.lineTo(-5 * dir, -85); 
+    ctx.arc(0, headY - 3, 10, Math.PI, 0);
+    ctx.moveTo(0, headY - 8);
+    ctx.lineTo(-5 * dir, headY - 15);
     ctx.stroke();
     ctx.fill();
 
@@ -1202,10 +1211,11 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.lineWidth = 5;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(-10 * dir, -60);
+    const leftArmStart = isBlock ? -55 : -60;
+    ctx.moveTo(-10 * dir, leftArmStart);
     if (isBlock) {
-        // Left hand holding lower part of sword
-        ctx.lineTo(8 * dir, -40);
+        // Left hand holding lower part of sword, more forward position
+        ctx.lineTo(12 * dir, -38);
     } else if (isThrust) {
          ctx.lineTo(10 * dir, -50); // Tucked
     } else if (isAttack) {
@@ -1231,10 +1241,11 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.lineWidth = 5;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(10 * dir, -60);
+    const rightArmStart = isBlock ? -55 : -60;
+    ctx.moveTo(10 * dir, rightArmStart);
     if (isBlock) {
-        // Right hand holding upper part of sword
-        ctx.lineTo(8 * dir, -55);
+        // Right hand holding upper part of sword, extended forward
+        ctx.lineTo(15 * dir, -48);
     } else if (state.state === 'FLOATING_PASSAGE') {
          ctx.lineTo(25 * dir, -60);
     } else if (isAttack) {
@@ -1394,17 +1405,17 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.stroke();
 
     } else if (isBlock) {
-        // Block stance - simple guard without aura
-        const handX = 8 * dir;
-        const handY = -50;
+        // Block stance - defensive guard position
+        const handX = 14 * dir; // More forward position
+        const handY = -43; // Lower to match lowered stance
         const bladeLength = 60; // Match sword length to idle/attack stance
 
-        // Vertical sword blade
+        // Vertical sword blade - slightly angled forward for more realistic guard
         ctx.strokeStyle = '#e5e7eb';
         ctx.lineWidth = 6;
         ctx.beginPath();
-        ctx.moveTo(handX, handY + 15);
-        ctx.lineTo(handX, handY - bladeLength);
+        ctx.moveTo(handX, handY + 10);
+        ctx.lineTo(handX + (2 * dir), handY - bladeLength); // Slight forward angle
         ctx.stroke();
     } else {
         // Idle/sheathed stance
