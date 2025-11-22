@@ -1281,8 +1281,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     const leftArmStart = isBlock ? -55 : -60;
     ctx.moveTo(-10 * dir, leftArmStart);
     if (isBlock) {
-        // Left hand holding lower tsuka (handle)
-        ctx.lineTo(14 * dir, -18);
+        // Left hand holding kashira (pommel end) - horizontal guard
+        ctx.lineTo(-30 * dir, -42);
     } else if (isThrust) {
          ctx.lineTo(10 * dir, -50); // Tucked
     } else if (isAttack) {
@@ -1311,8 +1311,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     const rightArmStart = isBlock ? -55 : -60;
     ctx.moveTo(10 * dir, rightArmStart);
     if (isBlock) {
-        // Right hand holding upper tsuka near tsuba
-        ctx.lineTo(14 * dir, -35);
+        // Right hand near tsuba (guard) - horizontal guard
+        ctx.lineTo(-12 * dir, -48);
     } else if (state.state === 'FLOATING_PASSAGE') {
          ctx.lineTo(25 * dir, -60);
     } else if (isAttack) {
@@ -1472,10 +1472,18 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.stroke();
 
     } else if (isBlock) {
-        // Block stance - defensive guard position with detailed katana
-        const handX = 14 * dir;
-        const handY = -43;
-        const bladeLength = 55;
+        // Block stance - sword held diagonally across body
+        ctx.save();
+
+        const bladeLength = 60;
+        // Pivot point at center of body
+        const pivotX = 5 * dir;
+        const pivotY = -50;
+
+        // Sword angled diagonally across body (about 30 degrees from horizontal)
+        ctx.translate(pivotX, pivotY);
+        ctx.rotate(dir * -0.5); // Tilt blade upward toward enemy
+        ctx.translate(-pivotX, -pivotY);
 
         // === KATANA DRAWING ===
 
@@ -1483,11 +1491,10 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.strokeStyle = '#9ca3af';
         ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.moveTo(handX + (3 * dir), handY + 5);
-        // Slight curve for katana shape
+        ctx.moveTo(pivotX - 15 * dir, pivotY + 2);
         ctx.quadraticCurveTo(
-            handX + (5 * dir), handY - bladeLength/2,
-            handX + (4 * dir), handY - bladeLength
+            pivotX + 15 * dir, pivotY - 3,
+            pivotX + bladeLength * dir, pivotY - 5
         );
         ctx.stroke();
 
@@ -1495,67 +1502,68 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.strokeStyle = '#f4f4f5';
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.moveTo(handX + (1 * dir), handY + 5);
+        ctx.moveTo(pivotX - 15 * dir, pivotY + 5);
         ctx.quadraticCurveTo(
-            handX + (2 * dir), handY - bladeLength/2,
-            handX + (2 * dir), handY - bladeLength
+            pivotX + 15 * dir, pivotY,
+            pivotX + bladeLength * dir, pivotY - 2
         );
         ctx.stroke();
 
-        // Blade highlight (shinogi line)
+        // Blade highlight
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 1;
-        ctx.globalAlpha = 0.6;
+        ctx.globalAlpha = 0.5;
         ctx.beginPath();
-        ctx.moveTo(handX + (2 * dir), handY);
-        ctx.quadraticCurveTo(
-            handX + (3 * dir), handY - bladeLength/2,
-            handX + (3 * dir), handY - bladeLength + 5
-        );
+        ctx.moveTo(pivotX - 10 * dir, pivotY + 3);
+        ctx.lineTo(pivotX + (bladeLength - 10) * dir, pivotY - 3);
         ctx.stroke();
         ctx.globalAlpha = 1.0;
 
-        // Kissaki (blade tip) - pointed shape
+        // Kissaki (blade tip)
         ctx.fillStyle = '#e5e7eb';
         ctx.beginPath();
-        ctx.moveTo(handX + (1 * dir), handY - bladeLength);
-        ctx.lineTo(handX + (4 * dir), handY - bladeLength);
-        ctx.lineTo(handX + (2 * dir), handY - bladeLength - 8); // Tip point
+        ctx.moveTo(pivotX + bladeLength * dir, pivotY - 5);
+        ctx.lineTo(pivotX + bladeLength * dir, pivotY + 2);
+        ctx.lineTo(pivotX + (bladeLength + 8) * dir, pivotY - 2);
         ctx.closePath();
         ctx.fill();
 
         // Habaki (blade collar)
         ctx.fillStyle = '#d4af37';
-        ctx.fillRect(handX - (1 * dir), handY + 3, 6 * dir, 6);
+        ctx.beginPath();
+        ctx.ellipse(pivotX - 12 * dir, pivotY + 3, 4, 5, dir * 0.3, 0, Math.PI * 2);
+        ctx.fill();
 
-        // Tsuba (guard) - circular
+        // Tsuba (guard)
         ctx.fillStyle = '#1f2937';
         ctx.strokeStyle = '#d4af37';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.ellipse(handX + (2 * dir), handY + 10, 8, 5, 0, 0, Math.PI * 2);
+        ctx.ellipse(pivotX - 15 * dir, pivotY + 3, 6, 8, 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
 
-        // Tsuka (handle wrap pattern)
+        // Tsuka (handle)
         ctx.strokeStyle = '#18181b';
-        ctx.lineWidth = 4;
+        ctx.lineWidth = 5;
         ctx.beginPath();
-        ctx.moveTo(handX + (1 * dir), handY + 12);
-        ctx.lineTo(handX + (1 * dir), handY + 28);
+        ctx.moveTo(pivotX - 18 * dir, pivotY + 3);
+        ctx.lineTo(pivotX - 35 * dir, pivotY + 8);
         ctx.stroke();
 
-        // Handle wrap diamonds (menuki style)
+        // Menuki (handle ornament)
         ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
-        ctx.arc(handX + (1 * dir), handY + 18, 2, 0, Math.PI * 2);
+        ctx.arc(pivotX - 26 * dir, pivotY + 5, 2, 0, Math.PI * 2);
         ctx.fill();
 
         // Kashira (pommel)
         ctx.fillStyle = '#1f2937';
         ctx.beginPath();
-        ctx.ellipse(handX + (1 * dir), handY + 30, 4, 3, 0, 0, Math.PI * 2);
+        ctx.ellipse(pivotX - 37 * dir, pivotY + 9, 4, 3, dir * 0.3, 0, Math.PI * 2);
         ctx.fill();
+
+        ctx.restore();
     } else {
         // Idle/sheathed stance
         // Scabbard on back
@@ -1706,73 +1714,212 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.lineWidth = 4; 
     ctx.lineCap = 'square';
     ctx.beginPath();
-    
+
     const handleGradient = ctx.createLinearGradient(handX, handY, handX + 20*dir, handY+20);
     handleGradient.addColorStop(0, '#4b5563');
     handleGradient.addColorStop(1, '#000');
-    
+
     if (state.state === 'WINDUP') {
-        ctx.strokeStyle = '#78350f';
-        ctx.moveTo(handX - 10*dir, handY + 10);
-        ctx.lineTo(handX, handY); 
-        ctx.stroke();
-        
-        ctx.strokeStyle = '#e5e7eb';
-        ctx.lineWidth = 6;
+        // Sword raised for attack - detailed katana
+        const bladeLen = 80;
+        const tipX = handX - 30*dir;
+        const tipY = handY - 100;
+
+        // Handle (tsuka)
+        ctx.strokeStyle = '#1f2937';
+        ctx.lineWidth = 5;
         ctx.beginPath();
         ctx.moveTo(handX, handY);
-        ctx.lineTo(handX - 40*dir, handY - 120); 
+        ctx.lineTo(handX + 15*dir, handY + 20);
         ctx.stroke();
+
+        // Tsuba (guard)
+        ctx.fillStyle = '#374151';
+        ctx.strokeStyle = '#9ca3af';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(handX - 2*dir, handY - 5, 6, 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Blade back (mune)
+        ctx.strokeStyle = '#6b7280';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(handX - 5*dir, handY - 8);
+        ctx.quadraticCurveTo(tipX + 15*dir, tipY + 40, tipX, tipY);
+        ctx.stroke();
+
+        // Blade edge (ha)
+        ctx.strokeStyle = '#e5e7eb';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(handX, handY - 5);
+        ctx.quadraticCurveTo(tipX + 20*dir, tipY + 35, tipX + 3*dir, tipY + 3);
+        ctx.stroke();
+
+        // Blade tip (kissaki)
+        ctx.fillStyle = '#f4f4f5';
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(tipX + 5*dir, tipY + 8);
+        ctx.lineTo(tipX - 3*dir, tipY + 5);
+        ctx.closePath();
+        ctx.fill();
 
     } else if (state.state === 'ATTACK') {
-        ctx.strokeStyle = '#78350f';
+        // Sword swinging - detailed katana
+        const bladeLen = 85;
+        const tipX = handX + 80*dir;
+        const tipY = handY + 35;
+
+        // Handle
+        ctx.strokeStyle = '#1f2937';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
         ctx.moveTo(handX, handY);
-        ctx.lineTo(handX - 10*dir, handY - 10);
+        ctx.lineTo(handX - 15*dir, handY - 15);
         ctx.stroke();
 
-        ctx.strokeStyle = '#fff'; 
-        ctx.lineWidth = 6;
+        // Tsuba
+        ctx.fillStyle = '#374151';
         ctx.beginPath();
-        ctx.moveTo(handX, handY);
-        ctx.lineTo(handX + 90*dir, handY + 40); 
+        ctx.ellipse(handX + 3*dir, handY + 3, 5, 7, dir * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Blade back
+        ctx.strokeStyle = '#6b7280';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(handX + 5*dir, handY);
+        ctx.quadraticCurveTo(handX + 50*dir, handY + 5, tipX - 5*dir, tipY - 5);
         ctx.stroke();
-        
-        ctx.strokeStyle = bossData.visualColor || '#dc2626'; 
-        ctx.globalAlpha = 0.4;
-        ctx.lineWidth = 20;
+
+        // Blade edge
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.moveTo(handX, handY - 50);
-        ctx.quadraticCurveTo(handX + 50*dir, handY - 50, handX + 100*dir, handY + 50);
+        ctx.moveTo(handX + 8*dir, handY + 5);
+        ctx.quadraticCurveTo(handX + 50*dir, handY + 15, tipX, tipY);
+        ctx.stroke();
+
+        // Blade tip
+        ctx.fillStyle = '#f4f4f5';
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(tipX - 8*dir, tipY - 8);
+        ctx.lineTo(tipX - 5*dir, tipY + 5);
+        ctx.closePath();
+        ctx.fill();
+
+        // Attack trail effect
+        ctx.strokeStyle = bossData.visualColor || '#dc2626';
+        ctx.globalAlpha = 0.4;
+        ctx.lineWidth = 15;
+        ctx.beginPath();
+        ctx.moveTo(handX, handY - 40);
+        ctx.quadraticCurveTo(handX + 45*dir, handY - 30, handX + 90*dir, handY + 40);
         ctx.stroke();
         ctx.globalAlpha = 1.0;
 
     } else if (state.state === 'BLOCK') {
-        ctx.strokeStyle = '#e5e7eb';
-        ctx.lineWidth = 6;
-        ctx.beginPath();
-        ctx.moveTo(handX, handY + 20);
-        ctx.lineTo(handX, handY - 100); 
-        ctx.stroke();
-        
-        ctx.fillStyle = '#3b82f6'; 
-        ctx.globalAlpha = 0.4;
-        ctx.beginPath();
-        ctx.ellipse(handX + 5*dir, handY - 40, 20, 60, 0, 0, Math.PI*2);
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-        
-    } else {
-        ctx.strokeStyle = '#78350f';
-        ctx.moveTo(handX - 10*dir, handY); 
-        ctx.lineTo(handX + 10*dir, handY + 10);
-        ctx.stroke();
+        // Defensive stance - vertical katana
+        const bladeLen = 70;
 
-        ctx.strokeStyle = '#9ca3af';
+        // Handle
+        ctx.strokeStyle = '#1f2937';
         ctx.lineWidth = 5;
         ctx.beginPath();
-        ctx.moveTo(handX + 10*dir, handY + 10);
-        ctx.lineTo(handX + 60*dir, handY + 30); 
+        ctx.moveTo(handX, handY + 15);
+        ctx.lineTo(handX, handY + 35);
         ctx.stroke();
+
+        // Tsuba
+        ctx.fillStyle = '#374151';
+        ctx.strokeStyle = '#9ca3af';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(handX, handY + 12, 8, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Blade back
+        ctx.strokeStyle = '#6b7280';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(handX + 3*dir, handY + 8);
+        ctx.quadraticCurveTo(handX + 5*dir, handY - 35, handX + 3*dir, handY - bladeLen);
+        ctx.stroke();
+
+        // Blade edge
+        ctx.strokeStyle = '#e5e7eb';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(handX - 2*dir, handY + 8);
+        ctx.quadraticCurveTo(handX, handY - 35, handX, handY - bladeLen);
+        ctx.stroke();
+
+        // Blade tip
+        ctx.fillStyle = '#f4f4f5';
+        ctx.beginPath();
+        ctx.moveTo(handX - 3*dir, handY - bladeLen);
+        ctx.lineTo(handX + 4*dir, handY - bladeLen);
+        ctx.lineTo(handX, handY - bladeLen - 10);
+        ctx.closePath();
+        ctx.fill();
+
+        // Block aura
+        ctx.fillStyle = '#3b82f6';
+        ctx.globalAlpha = 0.4;
+        ctx.beginPath();
+        ctx.ellipse(handX + 5*dir, handY - 30, 18, 50, 0, 0, Math.PI*2);
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+
+    } else {
+        // Idle stance - sword lowered
+        const bladeLen = 55;
+        const tipX = handX + 50*dir;
+        const tipY = handY + 25;
+
+        // Handle
+        ctx.strokeStyle = '#1f2937';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(handX - 5*dir, handY - 5);
+        ctx.lineTo(handX + 8*dir, handY + 8);
+        ctx.stroke();
+
+        // Tsuba
+        ctx.fillStyle = '#374151';
+        ctx.beginPath();
+        ctx.ellipse(handX + 10*dir, handY + 10, 5, 6, dir * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Blade back
+        ctx.strokeStyle = '#6b7280';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(handX + 12*dir, handY + 12);
+        ctx.quadraticCurveTo(handX + 35*dir, handY + 15, tipX - 3*dir, tipY - 3);
+        ctx.stroke();
+
+        // Blade edge
+        ctx.strokeStyle = '#9ca3af';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(handX + 14*dir, handY + 15);
+        ctx.quadraticCurveTo(handX + 35*dir, handY + 22, tipX, tipY);
+        ctx.stroke();
+
+        // Blade tip
+        ctx.fillStyle = '#d1d5db';
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(tipX - 6*dir, tipY - 5);
+        ctx.lineTo(tipX - 4*dir, tipY + 4);
+        ctx.closePath();
+        ctx.fill();
     }
 
     ctx.restore();
