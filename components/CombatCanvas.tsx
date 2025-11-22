@@ -36,8 +36,9 @@ const FRICTION = 0.85;
 
 // Attack Properties
 const ATK_LIGHT = { windup: 35, active: 15, recover: 40, damageMult: 0.8, range: 130 };
-const ATK_HEAVY = { windup: 80, active: 25, recover: 140, damageMult: 1.5, range: 160 }; 
+const ATK_HEAVY = { windup: 80, active: 25, recover: 140, damageMult: 1.5, range: 160 };
 const ATK_COMBO = { windup: 25, active: 12, recover: 30, damageMult: 0.7, range: 120 };
+const ATK_THRUST = { windup: 45, active: 8, recover: 60, damageMult: 1.3, range: 200 }; // Fast lunge, long range, narrow hitbox
 
 const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, level, onCombatEnd, updateHUD, setLog, consumeGourd, consumeEmblem }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -102,7 +103,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       dodgeCooldown: 0,
       maxWindup: 0,
       currentMove: '',
-      attackType: 'LIGHT' as 'LIGHT' | 'HEAVY' | 'COMBO',
+      attackType: 'LIGHT' as 'LIGHT' | 'HEAVY' | 'COMBO' | 'THRUST',
       moveQueue: [] as string[],
       isPerilous: false,
       paceTimer: 0,
@@ -194,6 +195,48 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     playCombatSound('PERILOUS');
     spawnSparks(boss.x + boss.width/2, boss.y + 40, 30, '#dc2626');
     triggerShake(10);
+  };
+
+  const calculateBossThrustChance = (player: any, boss: any, distance: number, level: number, frame: number) => {
+    if (level < 2) return 0;
+
+    const idealRange = distance >= 120 && distance <= 200;
+    const extendedRange = distance >= 90 && distance <= 240;
+    const playerVulnerable = player.state === 'HEAL' || player.state === 'THRUST_CHARGE';
+
+    if (!extendedRange && !playerVulnerable) return 0;
+
+    let chance = 0.05 + Math.min(0.2, level * 0.01);
+    if (idealRange) {
+      chance += 0.35;
+    } else if (extendedRange) {
+      chance += 0.15;
+    } else if (playerVulnerable) {
+      chance += 0.1;
+    }
+
+    if (playerVulnerable) {
+      chance += 0.35;
+    }
+
+    if (player.state === 'BLOCK') {
+      chance += 0.1;
+    }
+
+    const movingAway = (player.x < boss.x && player.vx < -1.2) || (player.x > boss.x && player.vx > 1.2);
+    if (movingAway) {
+      chance += 0.1;
+    }
+
+    if (boss.posture > boss.maxPosture * 0.65) {
+      chance -= 0.1;
+    }
+
+    if (boss.lastHitTime > 0 && frame - boss.lastHitTime < 45) {
+      chance -= 0.05;
+    }
+
+    return Math.max(0, Math.min(0.55, chance));
   };
 
   // --- PHYSICS: RIGID BODY & ELASTIC COLLISION ---
@@ -736,17 +779,30 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             boss.state = 'PACE';
             boss.paceTimer = 40 + Math.random() * 40;
          }
-         else if (dist < 250 && Math.random() < bossData.stats.aggression) {
-            boss.state = 'WINDUP';
-            const attackRng = Math.random();
-            if (attackRng < 0.35) {
+        else if (dist < 250 && Math.random() < bossData.stats.aggression) {
+           boss.state = 'WINDUP';
+           const attackRng = Math.random();
+           const thrustChance = calculateBossThrustChance(player, boss, dist, level, state.frame);
+
+           if (attackRng < thrustChance) {
+             boss.attackType = 'THRUST';
+             const playerVulnerable = player.state === 'HEAL' || player.state === 'THRUST_CHARGE';
+             const perilousChance = Math.min(0.85, 0.3 + level * 0.03 + (playerVulnerable ? 0.2 : 0));
+             boss.isPerilous = Math.random() < perilousChance;
+             if (boss.isPerilous) {
+               setLog("危！突刺攻击！");
+               playCombatSound('PERILOUS');
+             } else {
+               setLog("BOSS: 突刺！");
+             }
+           } else if (attackRng < thrustChance + 0.25) {
+             boss.attackType = 'HEAVY';
+             boss.isPerilous = false;
+             setLog("BOSS 蓄力重击！");
+           } else if (attackRng < thrustChance + 0.35) {
               boss.attackType = 'HEAVY';
-              boss.isPerilous = false;
-              setLog("BOSS 蓄力重击！");
-            } else if (attackRng < 0.45) {
-              boss.attackType = 'HEAVY'; 
               boss.isPerilous = true;
-              setLog("危！(下段/突刺)");
+              setLog("危！下段攻击！");
               playCombatSound('PERILOUS');
             } else {
               boss.attackType = 'LIGHT';
@@ -756,9 +812,10 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                  if (level > 10) boss.moveQueue.push('COMBO');
               }
             }
-            const props = boss.attackType === 'HEAVY' ? ATK_HEAVY : ATK_LIGHT;
-            const speedMod = Math.max(0, (level * 1.5)); 
-            boss.maxWindup = Math.max(20, props.windup - speedMod); 
+            const props = boss.attackType === 'THRUST' ? ATK_THRUST :
+                          (boss.attackType === 'HEAVY' ? ATK_HEAVY : ATK_LIGHT);
+            const speedMod = Math.max(0, (level * 1.5));
+            boss.maxWindup = Math.max(20, props.windup - speedMod);
             boss.attackTimer = boss.maxWindup; 
          } else {
             const speed = bossData.stats.speed * (boss.state === 'PACE' ? 0.5 : 1);
@@ -824,17 +881,21 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
       if (boss.attackTimer <= 0) {
         boss.state = 'ATTACK';
-        const props = boss.attackType === 'HEAVY' ? ATK_HEAVY :
-                      (boss.attackType === 'COMBO' ? ATK_COMBO : ATK_LIGHT);
+        const props = boss.attackType === 'THRUST' ? ATK_THRUST :
+                      (boss.attackType === 'HEAVY' ? ATK_HEAVY :
+                      (boss.attackType === 'COMBO' ? ATK_COMBO : ATK_LIGHT));
         boss.attackTimer = props.active;
         playCombatSound('SWING');
 
-        const lungeSpeed = boss.attackType === 'HEAVY' ? 9 : (boss.attackType === 'COMBO' ? 7 : 5);
+        // Thrust has much faster lunge speed
+        const lungeSpeed = boss.attackType === 'THRUST' ? 18 :
+                          (boss.attackType === 'HEAVY' ? 9 : (boss.attackType === 'COMBO' ? 7 : 5));
         const dir = boss.faceRight ? 1 : -1;
         if (boss.y === GROUND_Y) {
              boss.vx = dir * lungeSpeed;
-             // Higher jump chance when cornered or heavy attack
-             const jumpChance = isCornered ? 0.6 : (boss.attackType === 'HEAVY' ? 0.3 : 0);
+             // Thrust stays grounded, heavy may jump
+             const jumpChance = boss.attackType === 'THRUST' ? 0 :
+                               (isCornered ? 0.6 : (boss.attackType === 'HEAVY' ? 0.3 : 0));
              if (Math.random() < jumpChance) {
                  boss.vy = -10;
              }
@@ -843,16 +904,19 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     } 
     else if (boss.state === 'ATTACK') {
       boss.attackTimer--;
-      const props = boss.attackType === 'HEAVY' ? ATK_HEAVY : 
-                    (boss.attackType === 'COMBO' ? ATK_COMBO : ATK_LIGHT);
+      const props = boss.attackType === 'THRUST' ? ATK_THRUST :
+                    (boss.attackType === 'HEAVY' ? ATK_HEAVY :
+                    (boss.attackType === 'COMBO' ? ATK_COMBO : ATK_LIGHT));
       const hitFrame = Math.floor(props.active / 2);
 
       if (boss.attackTimer === hitFrame) {
+        // Thrust has narrow but long hitbox
+        const isThrust = boss.attackType === 'THRUST';
         const attackBox = {
-          x: boss.x + (boss.faceRight ? 0 : -props.range + boss.width), 
-          y: boss.y - 40,
+          x: boss.x + (boss.faceRight ? 0 : -props.range + boss.width),
+          y: boss.y + (isThrust ? 20 : -40), // Thrust targets body center
           width: props.range,
-          height: 120
+          height: isThrust ? 40 : 120 // Thrust is narrow
         };
         
         if (checkCollision(player, attackBox)) {
@@ -1720,107 +1784,239 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     handleGradient.addColorStop(1, '#000');
 
     if (state.state === 'WINDUP') {
-        // Sword raised for attack - detailed katana
-        const bladeLen = 80;
-        const tipX = handX - 30*dir;
-        const tipY = handY - 100;
+        const isThrust = state.attackType === 'THRUST';
 
-        // Handle (tsuka)
-        ctx.strokeStyle = '#1f2937';
-        ctx.lineWidth = 5;
-        ctx.beginPath();
-        ctx.moveTo(handX, handY);
-        ctx.lineTo(handX + 15*dir, handY + 20);
-        ctx.stroke();
+        if (isThrust) {
+            // Thrust windup - sword pulled back, aimed forward
+            const bladeLen = 85;
+            const tipX = handX - 60*dir; // Pulled back
+            const tipY = handY + 5;
 
-        // Tsuba (guard)
-        ctx.fillStyle = '#374151';
-        ctx.strokeStyle = '#9ca3af';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.ellipse(handX - 2*dir, handY - 5, 6, 8, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
+            // Handle
+            ctx.strokeStyle = '#1f2937';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(handX, handY);
+            ctx.lineTo(handX - 20*dir, handY + 8);
+            ctx.stroke();
 
-        // Blade back (mune)
-        ctx.strokeStyle = '#6b7280';
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(handX - 5*dir, handY - 8);
-        ctx.quadraticCurveTo(tipX + 15*dir, tipY + 40, tipX, tipY);
-        ctx.stroke();
+            // Tsuba
+            ctx.fillStyle = '#374151';
+            ctx.strokeStyle = '#9ca3af';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.ellipse(handX - 22*dir, handY + 8, 6, 8, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
 
-        // Blade edge (ha)
-        ctx.strokeStyle = '#e5e7eb';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(handX, handY - 5);
-        ctx.quadraticCurveTo(tipX + 20*dir, tipY + 35, tipX + 3*dir, tipY + 3);
-        ctx.stroke();
+            // Blade back - horizontal pointing backward
+            ctx.strokeStyle = '#6b7280';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(handX - 25*dir, handY + 5);
+            ctx.lineTo(tipX, tipY);
+            ctx.stroke();
 
-        // Blade tip (kissaki)
-        ctx.fillStyle = '#f4f4f5';
-        ctx.beginPath();
-        ctx.moveTo(tipX, tipY);
-        ctx.lineTo(tipX + 5*dir, tipY + 8);
-        ctx.lineTo(tipX - 3*dir, tipY + 5);
-        ctx.closePath();
-        ctx.fill();
+            // Blade edge
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(handX - 25*dir, handY + 10);
+            ctx.lineTo(tipX, tipY + 5);
+            ctx.stroke();
+
+            // Blade tip
+            ctx.fillStyle = '#f4f4f5';
+            ctx.beginPath();
+            ctx.moveTo(tipX - 8*dir, tipY);
+            ctx.lineTo(tipX, tipY + 3);
+            ctx.lineTo(tipX, tipY - 3);
+            ctx.closePath();
+            ctx.fill();
+
+            // Thrust charge effect - red glow at tip
+            if (state.isPerilous) {
+                ctx.fillStyle = '#ef4444';
+                ctx.globalAlpha = 0.6;
+                ctx.beginPath();
+                ctx.arc(tipX - 5*dir, tipY, 8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+            }
+        } else {
+            // Normal windup - sword raised for attack
+            const bladeLen = 80;
+            const tipX = handX - 30*dir;
+            const tipY = handY - 100;
+
+            // Handle (tsuka)
+            ctx.strokeStyle = '#1f2937';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(handX, handY);
+            ctx.lineTo(handX + 15*dir, handY + 20);
+            ctx.stroke();
+
+            // Tsuba (guard)
+            ctx.fillStyle = '#374151';
+            ctx.strokeStyle = '#9ca3af';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.ellipse(handX - 2*dir, handY - 5, 6, 8, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // Blade back (mune)
+            ctx.strokeStyle = '#6b7280';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(handX - 5*dir, handY - 8);
+            ctx.quadraticCurveTo(tipX + 15*dir, tipY + 40, tipX, tipY);
+            ctx.stroke();
+
+            // Blade edge (ha)
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(handX, handY - 5);
+            ctx.quadraticCurveTo(tipX + 20*dir, tipY + 35, tipX + 3*dir, tipY + 3);
+            ctx.stroke();
+
+            // Blade tip (kissaki)
+            ctx.fillStyle = '#f4f4f5';
+            ctx.beginPath();
+            ctx.moveTo(tipX, tipY);
+            ctx.lineTo(tipX + 5*dir, tipY + 8);
+            ctx.lineTo(tipX - 3*dir, tipY + 5);
+            ctx.closePath();
+            ctx.fill();
+        }
 
     } else if (state.state === 'ATTACK') {
-        // Sword swinging - detailed katana
-        const bladeLen = 85;
-        const tipX = handX + 80*dir;
-        const tipY = handY + 35;
+        const isThrust = state.attackType === 'THRUST';
 
-        // Handle
-        ctx.strokeStyle = '#1f2937';
-        ctx.lineWidth = 5;
-        ctx.beginPath();
-        ctx.moveTo(handX, handY);
-        ctx.lineTo(handX - 15*dir, handY - 15);
-        ctx.stroke();
+        if (isThrust) {
+            // Thrust attack - sword extended forward in a lunge
+            const bladeLen = 100;
+            const tipX = handX + 95*dir;
+            const tipY = handY + 15;
 
-        // Tsuba
-        ctx.fillStyle = '#374151';
-        ctx.beginPath();
-        ctx.ellipse(handX + 3*dir, handY + 3, 5, 7, dir * 0.5, 0, Math.PI * 2);
-        ctx.fill();
+            // Handle - held close to body
+            ctx.strokeStyle = '#1f2937';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(handX - 10*dir, handY);
+            ctx.lineTo(handX + 5*dir, handY + 5);
+            ctx.stroke();
 
-        // Blade back
-        ctx.strokeStyle = '#6b7280';
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(handX + 5*dir, handY);
-        ctx.quadraticCurveTo(handX + 50*dir, handY + 5, tipX - 5*dir, tipY - 5);
-        ctx.stroke();
+            // Tsuba
+            ctx.fillStyle = '#374151';
+            ctx.beginPath();
+            ctx.ellipse(handX + 8*dir, handY + 5, 5, 7, 0, 0, Math.PI * 2);
+            ctx.fill();
 
-        // Blade edge
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(handX + 8*dir, handY + 5);
-        ctx.quadraticCurveTo(handX + 50*dir, handY + 15, tipX, tipY);
-        ctx.stroke();
+            // Blade back - straight horizontal thrust
+            ctx.strokeStyle = '#6b7280';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(handX + 12*dir, handY + 3);
+            ctx.lineTo(tipX - 5*dir, tipY - 2);
+            ctx.stroke();
 
-        // Blade tip
-        ctx.fillStyle = '#f4f4f5';
-        ctx.beginPath();
-        ctx.moveTo(tipX, tipY);
-        ctx.lineTo(tipX - 8*dir, tipY - 8);
-        ctx.lineTo(tipX - 5*dir, tipY + 5);
-        ctx.closePath();
-        ctx.fill();
+            // Blade edge
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(handX + 12*dir, handY + 8);
+            ctx.lineTo(tipX - 3*dir, tipY + 3);
+            ctx.stroke();
 
-        // Attack trail effect
-        ctx.strokeStyle = bossData.visualColor || '#dc2626';
-        ctx.globalAlpha = 0.4;
-        ctx.lineWidth = 15;
-        ctx.beginPath();
-        ctx.moveTo(handX, handY - 40);
-        ctx.quadraticCurveTo(handX + 45*dir, handY - 30, handX + 90*dir, handY + 40);
-        ctx.stroke();
-        ctx.globalAlpha = 1.0;
+            // Blade tip - sharp point
+            ctx.fillStyle = '#f4f4f5';
+            ctx.beginPath();
+            ctx.moveTo(tipX, tipY);
+            ctx.lineTo(tipX - 10*dir, tipY - 5);
+            ctx.lineTo(tipX - 10*dir, tipY + 5);
+            ctx.closePath();
+            ctx.fill();
+
+            // Thrust trail effect - straight line
+            ctx.strokeStyle = state.isPerilous ? '#ef4444' : (bossData.visualColor || '#3b82f6');
+            ctx.globalAlpha = 0.5;
+            ctx.lineWidth = 12;
+            ctx.beginPath();
+            ctx.moveTo(handX, handY + 5);
+            ctx.lineTo(tipX + 20*dir, tipY);
+            ctx.stroke();
+
+            // Speed lines for thrust
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.globalAlpha = 0.3;
+            for (let i = 0; i < 4; i++) {
+                const offsetY = (i - 1.5) * 8;
+                ctx.beginPath();
+                ctx.moveTo(handX - 20*dir, handY + offsetY);
+                ctx.lineTo(handX + 40*dir, handY + 5 + offsetY * 0.5);
+                ctx.stroke();
+            }
+            ctx.globalAlpha = 1.0;
+
+        } else {
+            // Normal swing attack
+            const bladeLen = 85;
+            const tipX = handX + 80*dir;
+            const tipY = handY + 35;
+
+            // Handle
+            ctx.strokeStyle = '#1f2937';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(handX, handY);
+            ctx.lineTo(handX - 15*dir, handY - 15);
+            ctx.stroke();
+
+            // Tsuba
+            ctx.fillStyle = '#374151';
+            ctx.beginPath();
+            ctx.ellipse(handX + 3*dir, handY + 3, 5, 7, dir * 0.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Blade back
+            ctx.strokeStyle = '#6b7280';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(handX + 5*dir, handY);
+            ctx.quadraticCurveTo(handX + 50*dir, handY + 5, tipX - 5*dir, tipY - 5);
+            ctx.stroke();
+
+            // Blade edge
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(handX + 8*dir, handY + 5);
+            ctx.quadraticCurveTo(handX + 50*dir, handY + 15, tipX, tipY);
+            ctx.stroke();
+
+            // Blade tip
+            ctx.fillStyle = '#f4f4f5';
+            ctx.beginPath();
+            ctx.moveTo(tipX, tipY);
+            ctx.lineTo(tipX - 8*dir, tipY - 8);
+            ctx.lineTo(tipX - 5*dir, tipY + 5);
+            ctx.closePath();
+            ctx.fill();
+
+            // Attack trail effect
+            ctx.strokeStyle = bossData.visualColor || '#dc2626';
+            ctx.globalAlpha = 0.4;
+            ctx.lineWidth = 15;
+            ctx.beginPath();
+            ctx.moveTo(handX, handY - 40);
+            ctx.quadraticCurveTo(handX + 45*dir, handY - 30, handX + 90*dir, handY + 40);
+            ctx.stroke();
+            ctx.globalAlpha = 1.0;
+        }
 
     } else if (state.state === 'BLOCK') {
         // Defensive stance - vertical katana
