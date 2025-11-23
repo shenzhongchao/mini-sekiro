@@ -16,7 +16,8 @@ interface CombatCanvasProps {
 
 // Game Constants
 const FPS = 60;
-const GRAVITY = 0.6;
+const GRAVITY_ASCEND = 0.45;
+const GRAVITY_DESCEND = 0.9;
 const GROUND_Y = 350;
 const ARENA_WIDTH = 1000;
 const PARRY_WINDOW = 26; 
@@ -33,13 +34,17 @@ const MAX_CHARGE_FRAMES = 60; // 1 second max charge
 const PLAYER_MASS = 1.0;
 const BOSS_MASS = 10.0; 
 const ELASTICITY = 0.3; 
-const FRICTION = 0.85; 
+const FRICTION = 0.8; 
 
 // Attack Properties
 const ATK_LIGHT = { windup: 35, active: 15, recover: 40, damageMult: 0.8, range: 130 };
 const ATK_HEAVY = { windup: 80, active: 25, recover: 140, damageMult: 1.5, range: 160 };
 const ATK_COMBO = { windup: 25, active: 12, recover: 30, damageMult: 0.7, range: 120 };
 const ATK_THRUST = { windup: 45, active: 8, recover: 60, damageMult: 1.3, range: 200 }; // Fast lunge, long range, narrow hitbox
+const FLOAT_PASSAGE_TOTAL = 54;
+const FLOAT_PASSAGE_ASCEND = 18;
+const FLOAT_PASSAGE_HOVER = 8;
+const FLOAT_PASSAGE_HIT_FRAMES = [FLOAT_PASSAGE_ASCEND + FLOAT_PASSAGE_HOVER + 2, FLOAT_PASSAGE_ASCEND + FLOAT_PASSAGE_HOVER + 6, FLOAT_PASSAGE_ASCEND + FLOAT_PASSAGE_HOVER + 10, FLOAT_PASSAGE_ASCEND + FLOAT_PASSAGE_HOVER + 14, FLOAT_PASSAGE_ASCEND + FLOAT_PASSAGE_HOVER + 22];
 const ATK_SWEEP = { windup: 60, active: 18, recover: 90, damageMult: 1.1, range: 220 }; // Low horizontal sweep, unblockable
 
 type BossVisualTier = 'ASHINA' | 'ONSLAUGHT' | 'SHURA';
@@ -520,6 +525,13 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
      });
   };
 
+  const handleLandingImpact = (x: number, y: number, width: number, velocity: number, color: string = '#f97316') => {
+    if (velocity > 5) {
+      spawnSparks(x + width / 2, y + 5, 18, color);
+      triggerShake(Math.min(12, Math.floor(velocity)));
+    }
+  };
+
   const triggerShake = (intensity: number) => {
     gameState.current.shake = intensity;
   };
@@ -767,29 +779,26 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     }
     else {
         // Normal Movement
-        if (!controls.current.left && !controls.current.right && player.state !== 'HIT' && player.state !== 'FLOATING_PASSAGE') {
-            player.vx *= FRICTION;
-        }
-
         const canMove = player.state !== 'HIT' && player.state !== 'ATTACK' && player.state !== 'HEAL' && player.state !== 'FLOATING_PASSAGE' && player.state !== 'THRUST_CHARGE';
 
+        if (!controls.current.left && !controls.current.right && canMove) {
+            player.vx *= FRICTION;
+            if (Math.abs(player.vx) < 0.05) player.vx = 0;
+        }
+
         if (canMove) {
-            // Slower movement when blocking
             const moveSpeed = controls.current.block ? WALK_SPEED * 0.5 : WALK_SPEED;
-            const accel = controls.current.block ? 0.5 : 0.8;
+            const inertia = controls.current.block ? 0.15 : 0.25;
+            let desired = 0;
+            if (controls.current.left) desired = -moveSpeed;
+            if (controls.current.right) desired = moveSpeed;
 
-            if (controls.current.left) {
-                player.vx -= accel;
-                if (player.vx < -moveSpeed) player.vx = -moveSpeed;
-                player.facingRight = false;
-            }
-            if (controls.current.right) {
-                player.vx += accel;
-                if (player.vx > moveSpeed) player.vx = moveSpeed;
-                player.facingRight = true;
-            }
+            const delta = desired - player.vx;
+            player.vx += delta * inertia;
 
-            // Don't change state if blocking
+            if (desired > 0.1) player.facingRight = true;
+            else if (desired < -0.1) player.facingRight = false;
+
             if (!controls.current.block) {
                 if (Math.abs(player.vx) > 0.5) {
                     player.state = 'RUN';
@@ -811,11 +820,16 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         playCombatSound('CHARGE');
     }
 
+    const wasPlayerAirborne = player.y < GROUND_Y;
+    const prevPlayerVy = player.vy;
     player.x += player.vx;
     player.y += player.vy;
-    player.vy += GRAVITY;
+    player.vy += player.vy < 0 ? GRAVITY_ASCEND : GRAVITY_DESCEND;
     
     if (player.y > GROUND_Y) { 
+      if (wasPlayerAirborne) {
+        handleLandingImpact(player.x, GROUND_Y, player.width, Math.abs(prevPlayerVy), '#f97316');
+      }
       player.y = GROUND_Y; 
       player.vy = 0; 
     }
@@ -884,7 +898,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
        if (propsRef.current.consumeEmblem(3)) {
            setLog("绝技：飞渡浮舟");
            player.state = 'FLOATING_PASSAGE';
-           player.attackTimer = 60; 
+           player.attackTimer = FLOAT_PASSAGE_TOTAL; 
            player.toolCooldown = 100; 
            controls.current.floatingPassage = false;
            playCombatSound('SWING');
@@ -898,24 +912,52 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     // --- FLOATING PASSAGE EXECUTION ---
     if (player.state === 'FLOATING_PASSAGE') {
-       const t = 60 - player.attackTimer; 
+       const t = FLOAT_PASSAGE_TOTAL - player.attackTimer; 
        const dir = player.facingRight ? 1 : -1;
-       player.vx = dir * 2;
-       const isHitFrame = t === 0 || t === 10 || t === 20 || t === 30 || t === 50;
+       const ascending = t < FLOAT_PASSAGE_ASCEND;
+       const hovering = t >= FLOAT_PASSAGE_ASCEND && t < FLOAT_PASSAGE_ASCEND + FLOAT_PASSAGE_HOVER;
+
+       if (ascending) {
+          const ascentRatio = t / FLOAT_PASSAGE_ASCEND;
+          player.vx = dir * (1 + ascentRatio);
+          player.vy = -7 + ascentRatio * 1.5;
+       } else if (hovering) {
+          player.vx = dir * 2;
+          player.vy = Math.sin(t * 0.3) * 0.8;
+       } else {
+          const diveRatio = (t - FLOAT_PASSAGE_ASCEND - FLOAT_PASSAGE_HOVER) / (FLOAT_PASSAGE_TOTAL - FLOAT_PASSAGE_ASCEND - FLOAT_PASSAGE_HOVER);
+          player.vx = dir * (3.5 + diveRatio * 1.8);
+          player.vy = 9 + diveRatio * 5;
+       }
+
+       if (ascending && t % 4 === 0) {
+          spawnDashTrail(player);
+       }
+       if (!ascending && !hovering) {
+          spawnSparks(player.x + player.width / 2, player.y - 10, 6, '#fef3c7');
+          gameState.current.shockwaves.push({
+            x: player.x + player.width / 2,
+            y: player.y + player.height / 2,
+            radius: 26,
+            alpha: 0.3
+          });
+       }
+
+       const isHitFrame = FLOAT_PASSAGE_HIT_FRAMES.includes(t);
        
        if (isHitFrame) {
            playCombatSound('FLURRY');
            const attackBox = {
-               x: player.x + (player.facingRight ? 10 : -80),
-               y: player.y - 20,
-               width: 100,
-               height: 80
+               x: player.x + (player.facingRight ? 0 : -90),
+               y: player.y - 10,
+               width: 110,
+               height: 70
            };
-           spawnSparks(attackBox.x + 40, attackBox.y + 40, 5, '#fff'); 
+           spawnSparks(attackBox.x + 55, attackBox.y + 35, 18, '#fef3c7'); 
 
            if (checkCollision(attackBox, boss)) {
-               let dmg = playerStats.attackPower * 0.3; 
-               let postureDmg = 1.5 + (playerStats.attackPower * 0.05);
+               let dmg = playerStats.attackPower * 0.4; 
+               let postureDmg = 2.5 + (playerStats.attackPower * 0.07);
                
                if (boss.state === 'BLOCK') {
                    playCombatSound('BLOCK');
@@ -924,7 +966,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                    boss.posture += postureDmg * 0.8; 
                } else {
                    playCombatSound('HIT');
-                   spawnSparks(boss.x + 25, boss.y + 40, 8, '#fca5a5');
+                   spawnSparks(boss.x + 25, boss.y + 40, 15, '#fca5a5');
                    boss.hp -= dmg;
                    boss.posture += postureDmg;
                    boss.state = 'HIT';
@@ -1058,7 +1100,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     const dist = Math.abs(player.x - boss.x);
     boss.faceRight = player.x > boss.x;
 
-    boss.vy += GRAVITY;
+    const wasBossAirborne = boss.y < GROUND_Y;
+    const prevBossVy = boss.vy;
+    boss.vy += boss.vy < 0 ? GRAVITY_ASCEND : GRAVITY_DESCEND;
     boss.x += boss.vx;
     boss.y += boss.vy;
     boss.vx *= FRICTION; 
@@ -1066,6 +1110,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     if (boss.postureRecoveryTimer > 0) boss.postureRecoveryTimer--;
 
     if (boss.y > GROUND_Y) {
+      if (wasBossAirborne) {
+        handleLandingImpact(boss.x, GROUND_Y, boss.width, Math.abs(prevBossVy), '#fbbf24');
+      }
       boss.y = GROUND_Y;
       boss.vy = 0;
     }
@@ -1400,9 +1447,16 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                  setLog(isPerilousHit ? "危技命中！(重伤)" : "受到伤害");
                }
                playCombatSound('HIT');
-               spawnSparks(player.x, player.y, isPerilousHit ? 60 : 20, '#ef4444');
-               triggerShake(isPerilousHit ? 30 : 10);
-               triggerHitStop(isPerilousHit ? 12 : 5);
+               spawnSparks(player.x, player.y, isPerilousHit ? 70 : 25, '#ef4444');
+               triggerShake(isPerilousHit ? 35 : 12);
+               triggerHitStop(isPerilousHit ? 14 : 6);
+               state.flashIntensity = Math.min(1, state.flashIntensity + (isPerilousHit ? 0.35 : 0.2));
+               state.shockwaves.push({
+                 x: player.x + player.width / 2,
+                 y: player.y + player.height / 2,
+                 radius: isPerilousHit ? 35 : 20,
+                 alpha: 0.6
+               });
                
                player.vx = boss.faceRight ? (isPerilousHit ? 15 : 8) : (isPerilousHit ? -15 : -8);
                player.vy = isSweep ? -12 : (isPerilousHit ? -8 : -4); 
@@ -1536,10 +1590,20 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             }
          } else if (boss.state === 'DODGE') {
             setLog("攻击落空！");
-         } else {
-            playCombatSound('HIT');
-            spawnSparks(boss.x + 25, boss.y + 40, 10, '#fca5a5');
-            triggerHitStop(4);
+        } else {
+           playCombatSound('HIT');
+           const sparkCount = isThrust ? 18 : 12;
+           spawnSparks(boss.x + 25, boss.y + 40, sparkCount, '#fca5a5');
+           const impactShake = isThrust ? 12 : 7;
+           triggerShake(impactShake);
+           triggerHitStop(isThrust ? 8 : 5);
+           state.flashIntensity = Math.min(1, state.flashIntensity + (isThrust ? 0.25 : 0.15));
+           state.shockwaves.push({
+             x: boss.x + boss.width / 2,
+             y: boss.y + 30,
+             radius: isThrust ? 30 : 18,
+             alpha: 0.75
+           });
 
             let dmg = playerStats.attackPower;
             if (isThrust) {
@@ -1612,10 +1676,14 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     const isRun = state.state === 'RUN';
     const isAttack = state.state === 'ATTACK';
+    const isFloat = state.state === 'FLOATING_PASSAGE';
     const facingBoss = isPlayerFacingBoss();
     const isBlock = state.state === 'BLOCK' || state.parryTimer > 0 || (controls.current.block && state.state !== 'HIT' && state.state !== 'ATTACK' && state.state !== 'HEAL' && state.state !== 'FLOATING_PASSAGE' && state.state !== 'THRUST_CHARGE' && state.state !== 'THRUST_RELEASE' && state.state !== 'DASH');
     const isThrust = state.state === 'THRUST_CHARGE' || state.state === 'THRUST_RELEASE';
     const dir = state.facingRight ? 1 : -1;
+    const floatPhase = isFloat ? (FLOAT_PASSAGE_TOTAL - state.attackTimer) : 0;
+    const isFloatAscend = isFloat && floatPhase < FLOAT_PASSAGE_ASCEND;
+    const isFloatDive = isFloat && !isFloatAscend;
 
     // Attack animation phases (18 frames total)
     const attackProgress = isAttack ? (18 - state.attackTimer) / 18 : 0;
@@ -1630,7 +1698,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     }
     if (isAttack && isSwing) {
       // Lean forward during swing
-      bodyTilt = dir * 0.1;
+      bodyTilt = dir * 0.12;
     }
     if (isBlock) {
       // Slight forward lean during defensive stance for better balance
@@ -1639,7 +1707,23 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     ctx.rotate(bodyTilt);
 
-    if (isThrust) {
+    if (isAttack) {
+      if (isWindup) {
+        ctx.translate(0, 5);
+      } else if (isRecovery) {
+        ctx.translate(0, -4);
+      }
+    }
+
+    if (isFloat) {
+        if (isFloatAscend) {
+            ctx.translate(0, -10 + Math.sin(frame * 0.25) * 2);
+            ctx.rotate(dir * 0.04);
+        } else {
+            ctx.translate(0, -12);
+            ctx.rotate(dir * 0.15);
+        }
+    } else if (isThrust) {
         // Rotate whole body for thrust lunge
         ctx.rotate(dir * Math.PI / 6);
         ctx.translate(dir * 10, 10);
@@ -1662,6 +1746,29 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.lineTo(20 * dir, 0);
         ctx.lineTo(30 * dir, 0);
         ctx.lineTo(15, -35);
+    } else if (isFloat) {
+        if (isFloatAscend) {
+            const wave = Math.sin(frame * 0.5) * 6;
+            ctx.moveTo(-6, -32 + wave);
+            ctx.lineTo(-14 * dir, -10);
+            ctx.lineTo(-6 * dir, 2);
+            ctx.lineTo(2, -32 + wave);
+
+            ctx.moveTo(4, -32 - wave);
+            ctx.lineTo(14 * dir, -8);
+            ctx.lineTo(8 * dir, 4);
+            ctx.lineTo(-2, -32 - wave);
+        } else {
+            ctx.moveTo(-8, -20);
+            ctx.lineTo(-5 * dir, 10);
+            ctx.lineTo(5 * dir, 15);
+            ctx.lineTo(6, -10);
+
+            ctx.moveTo(6, -25);
+            ctx.lineTo(24 * dir, -5);
+            ctx.lineTo(20 * dir, 10);
+            ctx.lineTo(0, -15);
+        }
     } else if (isBlock) {
         // Defensive stance - one foot forward, lowered center of gravity
         // Back leg (stable)
@@ -1701,12 +1808,12 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     // --- BODY ---
     ctx.fillStyle = '#d97706';
     ctx.beginPath();
-    const bodyLower = isBlock ? -30 : -35; // Lower body position when blocking
-    const bodyUpper = isBlock ? -60 : -65;
+    const bodyLower = isBlock ? -30 : (isFloat ? -32 : -35); // Lower body position when blocking/flowing
+    const bodyUpper = isBlock ? -60 : (isFloat ? -68 : -65);
     ctx.moveTo(-12, bodyLower);
     ctx.lineTo(12, bodyLower);
-    ctx.lineTo(15, bodyUpper);
-    ctx.lineTo(-15, bodyUpper);
+    ctx.lineTo(isFloat ? 10 : 15, bodyUpper);
+    ctx.lineTo(isFloat ? -10 : -15, bodyUpper);
     ctx.fill();
 
     ctx.fillStyle = '#18181b';
@@ -1755,6 +1862,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     if (isBlock) {
         // Left hand holding kashira (pommel end) - horizontal guard
         ctx.lineTo(-30 * dir, -42);
+    } else if (isFloat) {
+        const floatWave = Math.sin(frame * 0.5) * 8;
+        ctx.quadraticCurveTo(25 * dir, -58 + floatWave, 35 * dir, -40);
     } else if (isThrust) {
          ctx.lineTo(10 * dir, -50); // Tucked
     } else if (isAttack) {
@@ -1767,7 +1877,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             ctx.lineTo(10 * dir, -48); // Return
         }
     } else {
-        if (state.toolCooldown > 20 && state.state !== 'FLOATING_PASSAGE') {
+        if (state.toolCooldown > 20 && !isFloat) {
             ctx.lineTo(30 * dir, -60);
         } else {
             ctx.lineTo(15 * dir, -45);
@@ -1785,8 +1895,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     if (isBlock) {
         // Right hand near tsuba (guard) - horizontal guard
         ctx.lineTo(-12 * dir, -48);
-    } else if (state.state === 'FLOATING_PASSAGE') {
-         ctx.lineTo(25 * dir, -60);
+    } else if (isFloat) {
+         const floatArc = Math.sin(frame * 0.4) * 6;
+         ctx.quadraticCurveTo(20 * dir, -70 + floatArc, 45 * dir, -50);
     } else if (isAttack) {
         // Dynamic arm position during attack
         if (isWindup) {
@@ -1809,29 +1920,53 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     // --- WEAPON ---
 
     if (state.state === 'FLOATING_PASSAGE') {
-        // Floating Passage - rapid slashes
-        ctx.strokeStyle = '#e4e4e7';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(25 * dir, -60);
-        ctx.quadraticCurveTo(50 * dir, -65, 85 * dir, -50);
-        ctx.stroke();
+        if (isFloatAscend) {
+            const swirlPhase = frame * 0.35;
+            ctx.save();
+            for (let i = 0; i < 3; i++) {
+                const radius = 45 + i * 12;
+                ctx.strokeStyle = i === 0 ? '#fef3c7' : 'rgba(255,255,255,0.4)';
+                ctx.lineWidth = 2 - i * 0.3;
+                ctx.globalAlpha = 0.5 - i * 0.1;
+                ctx.beginPath();
+                const start = swirlPhase + i * 0.5;
+                const end = start + Math.PI * 0.8;
+                ctx.arc(10 * dir, -50, radius, start * dir, end * dir, dir < 0);
+                ctx.stroke();
+            }
+            ctx.restore();
+        } else {
+            ctx.strokeStyle = '#e4e4e7';
+            ctx.lineWidth = 5;
+            ctx.globalAlpha = 0.9;
+            ctx.beginPath();
+            ctx.moveTo(15 * dir, -65);
+            ctx.lineTo(60 * dir, -20);
+            ctx.stroke();
+
+            ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(20 * dir, -70);
+            ctx.lineTo(65 * dir, -25);
+            ctx.moveTo(25 * dir, -60);
+            ctx.lineTo(55 * dir, -15);
+            ctx.stroke();
+            ctx.globalAlpha = 1.0;
+        }
 
         ctx.strokeStyle = '#18181b';
-        ctx.lineWidth = 4;
+        ctx.lineWidth = 5;
         ctx.beginPath();
-        ctx.moveTo(15 * dir, -60);
-        ctx.lineTo(25 * dir, -60);
+        ctx.moveTo(18 * dir, -58);
+        ctx.lineTo(30 * dir, -55);
         ctx.stroke();
 
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2;
-        ctx.globalAlpha = 0.6;
+        ctx.globalAlpha = 0.4;
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
         ctx.beginPath();
-        ctx.arc(20 * dir, -60, 70, -Math.PI/2 + (frame*0.5), Math.PI + (frame*0.5), !state.facingRight);
-        ctx.moveTo(20 * dir, -60);
-        ctx.arc(20 * dir, -60, 50, -Math.PI, Math.PI, state.facingRight);
-        ctx.stroke();
+        ctx.ellipse(0, -40, 32, 14, 0, 0, Math.PI * 2);
+        ctx.fill();
         ctx.globalAlpha = 1.0;
 
     } else if (isAttack) {
@@ -2073,6 +2208,21 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.save();
     ctx.translate(x + w/2, y + h); 
     const dir = state.faceRight ? 1 : -1;
+    const isWindup = state.state === 'WINDUP';
+    const isAttack = state.state === 'ATTACK';
+    let postureOffset = 0;
+    if (isWindup && state.maxWindup) {
+        const ratio = 1 - Math.max(0, Math.min(1, state.attackTimer / state.maxWindup));
+        postureOffset = 10 * ratio;
+    } else if (isAttack) {
+        postureOffset = -6;
+    }
+    if (postureOffset !== 0) {
+        ctx.translate(0, postureOffset);
+    }
+    if (isAttack && state.attackType === 'HEAVY') {
+        ctx.rotate(dir * 0.04);
+    }
 
     if (profile && profile.hasCape) {
         ctx.save();

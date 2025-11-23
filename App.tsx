@@ -7,9 +7,9 @@ import UIOverlay from './components/UIOverlay';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { initAudio } from './utils/audio';
 
-const BEAD_FRAGMENT_THRESHOLD = 4;
-const BEAD_HP_BONUS = 25;
-const BEAD_POSTURE_BONUS = 12;
+const BEAD_FRAGMENT_THRESHOLD = 3;
+const BEAD_HP_BONUS = 35;
+const BEAD_POSTURE_BONUS = 15;
 
 const clamp = (value: number, minValue: number) => Math.max(value, minValue);
 

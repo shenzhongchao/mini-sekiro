@@ -14,15 +14,15 @@ const BOSS_NAMES = [
 const BOSS_MOVES = ["下段斩", "突刺", "跳劈", "飞渡浮舟", "巨型忍者突刺", "不死斩", "一文字", "龙闪"];
 
 const BEAD_VARIANTS = [
-  { name: '苇名佛珠碎片', desc: '残留苇名武人的祈愿。', vitality: 8, posture: 4 },
-  { name: '仙峰寺佛珠碎片', desc: '被香火熏染的碎片。', vitality: 10, posture: 3 },
-  { name: '修罗佛珠碎片', desc: '染血而燃烧，触之灼痛。', vitality: 12, posture: 5 }
+  { name: '苇名佛珠碎片', desc: '残留苇名武人的祈愿。', vitality: 12, posture: 6 },
+  { name: '仙峰寺佛珠碎片', desc: '被香火熏染的碎片。', vitality: 14, posture: 5 },
+  { name: '修罗佛珠碎片', desc: '染血而燃烧，触之灼痛。', vitality: 16, posture: 7 }
 ];
 
 const MEMORY_SCHOOLS = [
-  { name: '苇名流战记', effect: '精进基本剑技。', baseAttack: 1.1 },
-  { name: '孤影众密传', effect: '提高突刺与翻腾的锐度。', baseAttack: 1.25 },
-  { name: '乱波残影', effect: '刺杀经验加深，提升出血伤害。', baseAttack: 1.35 }
+  { name: '苇名流战记', effect: '精进基本剑技。', baseAttack: 1.5 },
+  { name: '孤影众密传', effect: '提高突刺与翻腾的锐度。', baseAttack: 1.7 },
+  { name: '乱波残影', effect: '刺杀经验加深，提升出血伤害。', baseAttack: 1.9 }
 ];
 
 const MATERIAL_POOL = [
@@ -53,6 +53,13 @@ const RELIC_POOL = [
   { name: '龙胤遗灰', effect: '稀有遗物，蕴含龙胤之力。', attack: 0.4, vitality: 5 },
   { name: '竹叶念珠', effect: '念诵加护，提升架势上限。', posture: 8 }
 ];
+
+const RARITY_PREFIX: Record<Rarity, string> = {
+  [Rarity.COMMON]: '普通',
+  [Rarity.RARE]: '稀有',
+  [Rarity.EPIC]: '史诗',
+  [Rarity.LEGENDARY]: '传说'
+};
 
 const GOURD_SEEDS = [
   { name: '伤药葫芦种子', effect: '交予艾玛即可增添葫芦容量。' },
@@ -173,8 +180,8 @@ const buildBeadFragment = (level: number, rarity: Rarity): Item => {
   const variant = getRandomElement(BEAD_VARIANTS);
   const rarityMult = getRarityMultiplier(rarity);
   const stats: ItemStats = {
-    vitality: Math.ceil((variant.vitality + level * 1.5) * 0.5 * rarityMult),
-    posture: Math.ceil((variant.posture + level) * 0.4 * rarityMult)
+    vitality: Math.ceil((variant.vitality + level * 2.2) * 0.7 * rarityMult),
+    posture: Math.ceil((variant.posture + level * 1.2) * 0.6 * rarityMult)
   };
   return {
     id: `bead_${Date.now()}_${Math.random()}`,
@@ -184,7 +191,7 @@ const buildBeadFragment = (level: number, rarity: Rarity): Item => {
     category: ItemCategory.BEAD_FRAGMENT,
     quantity: 1,
     stats,
-    effectSummary: '收集四枚可凝成佛珠，永久提升体力与架势。'
+    effectSummary: '收集三枚可凝成佛珠，永久提升体力与架势。'
   };
 };
 
@@ -192,7 +199,7 @@ const buildBattleMemory = (level: number, rarity: Rarity): Item => {
   const school = getRandomElement(MEMORY_SCHOOLS);
   const rarityMult = getRarityMultiplier(rarity);
   const stats: ItemStats = {
-    attack: Math.max(1, Math.ceil((school.baseAttack + level * 0.25) * rarityMult))
+    attack: Math.max(2, Math.ceil((school.baseAttack + level * 0.45) * rarityMult))
   };
   return {
     id: `memory_${Date.now()}_${Math.random()}`,
@@ -210,11 +217,11 @@ const buildMaterial = (level: number, rarity: Rarity): Item => {
   const rarityMult = getRarityMultiplier(rarity);
   const stats: ItemStats = {};
   if (material.stat === 'attack') {
-    stats.attack = Math.max(1, Math.ceil(level * 0.2 * rarityMult));
+    stats.attack = Math.max(1, Math.ceil(level * 0.3 * rarityMult));
   } else if (material.stat === 'posture') {
-    stats.posture = Math.ceil((5 + level) * 0.5 * rarityMult);
+    stats.posture = Math.ceil((8 + level * 1.2) * 0.6 * rarityMult);
   } else if (material.stat === 'postureRecovery') {
-    stats.postureRecovery = toFixedStat((0.02 + level * 0.002) * rarityMult);
+    stats.postureRecovery = toFixedStat((0.03 + level * 0.003) * rarityMult);
   }
   return {
     id: `material_${Date.now()}_${Math.random()}`,
@@ -231,12 +238,14 @@ const buildTalisman = (level: number, rarity: Rarity): Item => {
   const talisman = getRandomElement(TALISMAN_POOL);
   const rarityMult = getRarityMultiplier(rarity);
   const stats: ItemStats = {
-    vitality: Math.ceil((6 + level * 1.2) * rarityMult * 0.6),
-    postureRecovery: toFixedStat((0.02 + level * 0.0015) * rarityMult)
+    vitality: Math.ceil((10 + level * 1.8) * rarityMult * 0.7),
+    postureRecovery: toFixedStat((0.025 + level * 0.002) * rarityMult)
   };
+  const prefix = RARITY_PREFIX[rarity] || '';
+  const itemName = `${prefix}${talisman.name}`;
   return {
     id: `talisman_${Date.now()}_${Math.random()}`,
-    name: talisman.name,
+    name: itemName,
     description: `${talisman.effect} (${rarity})`,
     rarity,
     category: ItemCategory.TALISMAN,
@@ -249,10 +258,10 @@ const buildEngraving = (level: number, rarity: Rarity): Item => {
   const seal = getRandomElement(ENGRAVING_POOL);
   const rarityMult = getRarityMultiplier(rarity);
   const stats: ItemStats = {
-    attack: seal.attack ? Math.ceil(seal.attack * level * rarityMult) : undefined,
-    vitality: seal.vitality ? Math.ceil(seal.vitality * rarityMult) : undefined,
-    posture: seal.posture ? Math.ceil(seal.posture * rarityMult) : undefined,
-    postureRecovery: seal.postureRecovery ? toFixedStat(seal.postureRecovery * rarityMult) : undefined
+    attack: seal.attack ? Math.ceil(seal.attack * level * 1.2 * rarityMult) : undefined,
+    vitality: seal.vitality ? Math.ceil(seal.vitality * 1.2 * rarityMult) : undefined,
+    posture: seal.posture ? Math.ceil(seal.posture * 1.4 * rarityMult) : undefined,
+    postureRecovery: seal.postureRecovery ? toFixedStat(seal.postureRecovery * 1.5 * rarityMult) : undefined
   };
   return {
     id: `engraving_${Date.now()}_${Math.random()}`,
@@ -270,11 +279,11 @@ const buildSugar = (level: number, rarity: Rarity): Item => {
   const rarityMult = getRarityMultiplier(rarity);
   const stats: ItemStats = {};
   if (sugar.stat === 'attack') {
-    stats.attack = Math.ceil(Math.max(1, level * 0.15 * rarityMult));
+    stats.attack = Math.ceil(Math.max(1, level * 0.25 * rarityMult));
   } else if (sugar.stat === 'posture') {
-    stats.posture = Math.ceil((4 + level) * 0.3 * rarityMult);
+    stats.posture = Math.ceil((6 + level * 0.5) * 0.4 * rarityMult);
   } else {
-    stats.postureRecovery = toFixedStat((0.03 + level * 0.001) * rarityMult);
+    stats.postureRecovery = toFixedStat((0.035 + level * 0.0015) * rarityMult);
   }
   return {
     id: `sugar_${Date.now()}_${Math.random()}`,
@@ -291,9 +300,10 @@ const buildRelic = (level: number, rarity: Rarity): Item => {
   const relic = getRandomElement(RELIC_POOL);
   const rarityMult = getRarityMultiplier(rarity);
   const stats: ItemStats = {
-    attack: relic.attack ? Math.ceil(relic.attack * rarityMult) : undefined,
-    vitality: relic.vitality ? Math.ceil(relic.vitality * rarityMult) : undefined,
-    posture: relic.posture ? Math.ceil(relic.posture * rarityMult) : undefined
+    attack: relic.attack ? Math.ceil(relic.attack * 1.5 * rarityMult) : undefined,
+    vitality: relic.vitality ? Math.ceil(relic.vitality * 1.5 * rarityMult) : undefined,
+    posture: relic.posture ? Math.ceil(relic.posture * 1.5 * rarityMult) : undefined,
+    postureRecovery: toFixedStat(0.01 * rarityMult)
   };
   return {
     id: `relic_${Date.now()}_${Math.random()}`,
