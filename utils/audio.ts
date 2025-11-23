@@ -1,6 +1,44 @@
 
 let audioCtx: AudioContext | null = null;
 
+const FILE_SOUND_MAP = {
+  PARRY: new URL('../assets/audio/block.mp3', import.meta.url).href,
+  BLOCK: new URL('../assets/audio/ding.mp3', import.meta.url).href
+} as const;
+
+type FileSoundType = keyof typeof FILE_SOUND_MAP;
+
+const audioBufferCache = new Map<FileSoundType, AudioBuffer>();
+const audioBufferLoading = new Map<FileSoundType, Promise<AudioBuffer>>();
+
+const loadAudioBuffer = (type: FileSoundType): Promise<AudioBuffer> => {
+  if (!audioCtx) initAudio();
+  if (!audioCtx) return Promise.reject('Audio context unavailable');
+
+  if (audioBufferCache.has(type)) {
+    return Promise.resolve(audioBufferCache.get(type)!);
+  }
+
+  if (audioBufferLoading.has(type)) {
+    return audioBufferLoading.get(type)!;
+  }
+
+  const url = FILE_SOUND_MAP[type];
+  const loadPromise = fetch(url)
+    .then(res => res.arrayBuffer())
+    .then(data => audioCtx!.decodeAudioData(data))
+    .then(buffer => {
+      audioBufferCache.set(type, buffer);
+      return buffer;
+    })
+    .finally(() => {
+      audioBufferLoading.delete(type);
+    });
+
+  audioBufferLoading.set(type, loadPromise);
+  return loadPromise;
+};
+
 export const initAudio = () => {
   if (!audioCtx) {
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
@@ -23,66 +61,35 @@ export const playCombatSound = (type: 'PARRY' | 'BLOCK' | 'HIT' | 'SWING' | 'PER
 
   switch (type) {
     case 'PARRY': {
-      // "叮" (Ding) - Crisp, high-pitched, resonant
-      const osc = audioCtx.createOscillator();
-      osc.type = 'sine'; 
-      osc.frequency.setValueAtTime(1800, t); // High pitch
-      osc.frequency.exponentialRampToValueAtTime(1800, t + 0.5); 
-      osc.connect(gain);
-
-      const osc2 = audioCtx.createOscillator();
-      osc2.type = 'triangle';
-      osc2.frequency.setValueAtTime(3200, t);
-      osc2.frequency.exponentialRampToValueAtTime(200, t + 0.1); 
-      const gain2 = audioCtx.createGain();
-      gain2.gain.setValueAtTime(0.3, t);
-      gain2.gain.linearRampToValueAtTime(0, t + 0.1);
-      osc2.connect(gain2);
-      gain2.connect(audioCtx.destination);
-
-      gain.gain.setValueAtTime(0.0, t);
-      gain.gain.linearRampToValueAtTime(0.8, t + 0.01); 
-      gain.gain.exponentialRampToValueAtTime(0.01, t + 1.2); 
-
-      osc.start(t);
-      osc.stop(t + 1.2);
-      osc2.start(t);
-      osc2.stop(t + 0.1);
-      break;
+      loadAudioBuffer('BLOCK')
+        .then(buffer => {
+          if (!audioCtx) return;
+          const source = audioCtx.createBufferSource();
+          source.buffer = buffer;
+          const now = audioCtx.currentTime;
+          gain.gain.setValueAtTime(0.8, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 1.0);
+          source.connect(gain);
+          source.start(now);
+        })
+        .catch(err => console.error('Failed to load parry sound', err));
+      return;
     }
 
     case 'BLOCK': {
-      // "当" (Clang) - Sharp metallic impact
-      const osc = audioCtx.createOscillator();
-      osc.type = 'triangle'; 
-      osc.frequency.setValueAtTime(800, t);
-      osc.frequency.exponentialRampToValueAtTime(100, t + 0.15); 
-      
-      const osc2 = audioCtx.createOscillator();
-      osc2.type = 'square';
-      osc2.frequency.setValueAtTime(1150, t); 
-      osc2.frequency.exponentialRampToValueAtTime(200, t + 0.1);
-      
-      const gain2 = audioCtx.createGain();
-      gain2.gain.setValueAtTime(0.3, t);
-      gain2.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
-      osc2.connect(gain2);
-      gain2.connect(gain);
-
-      const filter = audioCtx.createBiquadFilter();
-      filter.type = 'highpass';
-      filter.frequency.setValueAtTime(400, t);
-      osc.connect(filter);
-      filter.connect(gain);
-
-      gain.gain.setValueAtTime(0.5, t);
-      gain.gain.exponentialRampToValueAtTime(0.01, t + 0.12); 
-
-      osc.start(t);
-      osc.stop(t + 0.15);
-      osc2.start(t);
-      osc2.stop(t + 0.15);
-      break;
+      loadAudioBuffer('PARRY')
+        .then(buffer => {
+          if (!audioCtx) return;
+          const source = audioCtx.createBufferSource();
+          source.buffer = buffer;
+          const now = audioCtx.currentTime;
+          gain.gain.setValueAtTime(0.9, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 1.2);
+          source.connect(gain);
+          source.start(now);
+        })
+        .catch(err => console.error('Failed to load block sound', err));
+      return;
     }
 
     case 'SWING': {

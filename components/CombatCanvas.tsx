@@ -1,5 +1,5 @@
 
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import { BossData, PlayerStats } from '../types';
 import { playCombatSound } from '../utils/audio';
 
@@ -39,6 +39,366 @@ const ATK_LIGHT = { windup: 35, active: 15, recover: 40, damageMult: 0.8, range:
 const ATK_HEAVY = { windup: 80, active: 25, recover: 140, damageMult: 1.5, range: 160 };
 const ATK_COMBO = { windup: 25, active: 12, recover: 30, damageMult: 0.7, range: 120 };
 const ATK_THRUST = { windup: 45, active: 8, recover: 60, damageMult: 1.3, range: 200 }; // Fast lunge, long range, narrow hitbox
+
+type BossVisualTier = 'ASHINA' | 'ONSLAUGHT' | 'SHURA';
+
+interface BossVisualProfile {
+  tier: BossVisualTier;
+  baseColor: string;
+  gradientFrom: string;
+  gradientTo: string;
+  trimColor: string;
+  accentColor: string;
+  auraColor?: string;
+  scarfColor?: string;
+  capeColor?: string;
+  hornColor?: string;
+  hasKabuto?: boolean;
+  hasScarf?: boolean;
+  hasCape?: boolean;
+  hasHorns?: boolean;
+  hasPrayerBeads?: boolean;
+}
+
+const LEVEL_VISUAL_PRESETS: BossVisualProfile[] = [
+  {
+    tier: 'ASHINA',
+    baseColor: '#f59e0b',
+    gradientFrom: '#fde047',
+    gradientTo: '#b45309',
+    trimColor: '#fcd34d',
+    accentColor: '#b91c1c',
+    auraColor: '#fef3c7',
+    scarfColor: '#c2410c',
+    capeColor: '#92400e',
+    hasKabuto: true,
+    hasScarf: false,
+    hasCape: false,
+    hasHorns: false,
+    hasPrayerBeads: true
+  },
+  {
+    tier: 'ASHINA',
+    baseColor: '#f97316',
+    gradientFrom: '#fdba74',
+    gradientTo: '#c2410c',
+    trimColor: '#fde047',
+    accentColor: '#dc2626',
+    auraColor: '#fed7aa',
+    scarfColor: '#c2410c',
+    capeColor: '#a16207',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: false,
+    hasHorns: false,
+    hasPrayerBeads: true
+  },
+  {
+    tier: 'ASHINA',
+    baseColor: '#fb923c',
+    gradientFrom: '#fed7aa',
+    gradientTo: '#b45309',
+    trimColor: '#fcd34d',
+    accentColor: '#d946ef',
+    auraColor: '#fde68a',
+    scarfColor: '#b45309',
+    capeColor: '#78350f',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: false,
+    hasPrayerBeads: true
+  },
+  {
+    tier: 'ASHINA',
+    baseColor: '#ea580c',
+    gradientFrom: '#fdba74',
+    gradientTo: '#9a3412',
+    trimColor: '#f97316',
+    accentColor: '#e11d48',
+    auraColor: '#fca5a5',
+    scarfColor: '#9a3412',
+    capeColor: '#7c2d12',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: false,
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'ASHINA',
+    baseColor: '#c2410c',
+    gradientFrom: '#fb923c',
+    gradientTo: '#7c2d12',
+    trimColor: '#f59e0b',
+    accentColor: '#ea580c',
+    auraColor: '#fb923c',
+    scarfColor: '#a16207',
+    capeColor: '#78350f',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: false,
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'ONSLAUGHT',
+    baseColor: '#b91c1c',
+    gradientFrom: '#ef4444',
+    gradientTo: '#7f1d1d',
+    trimColor: '#f97316',
+    accentColor: '#fde047',
+    auraColor: '#f87171',
+    scarfColor: '#991b1b',
+    capeColor: '#7f1d1d',
+    hasKabuto: false,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: false,
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'ONSLAUGHT',
+    baseColor: '#dc2626',
+    gradientFrom: '#f87171',
+    gradientTo: '#991b1b',
+    trimColor: '#fb923c',
+    accentColor: '#fde047',
+    auraColor: '#fb7185',
+    scarfColor: '#7f1d1d',
+    capeColor: '#991b1b',
+    hasKabuto: false,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: false,
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'ONSLAUGHT',
+    baseColor: '#f87171',
+    gradientFrom: '#fecdd3',
+    gradientTo: '#b91c1c',
+    trimColor: '#f97316',
+    accentColor: '#fde047',
+    auraColor: '#fecdd3',
+    scarfColor: '#b91c1c',
+    capeColor: '#9f1239',
+    hasKabuto: false,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: false,
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'ONSLAUGHT',
+    baseColor: '#fb7185',
+    gradientFrom: '#fecdd3',
+    gradientTo: '#9f1239',
+    trimColor: '#fb923c',
+    accentColor: '#fde047',
+    auraColor: '#f472b6',
+    scarfColor: '#be123c',
+    capeColor: '#9f1239',
+    hasKabuto: false,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: false,
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'ONSLAUGHT',
+    baseColor: '#f43f5e',
+    gradientFrom: '#fecdd3',
+    gradientTo: '#881337',
+    trimColor: '#fb7185',
+    accentColor: '#fef08a',
+    auraColor: '#f472b6',
+    scarfColor: '#e11d48',
+    capeColor: '#9f1239',
+    hasKabuto: false,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: false,
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'ONSLAUGHT',
+    baseColor: '#e11d48',
+    gradientFrom: '#fb7185',
+    gradientTo: '#881337',
+    trimColor: '#f97316',
+    accentColor: '#fde047',
+    auraColor: '#f472b6',
+    scarfColor: '#9f1239',
+    capeColor: '#7f1d1d',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: false,
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'ONSLAUGHT',
+    baseColor: '#be123c',
+    gradientFrom: '#fb7185',
+    gradientTo: '#701a75',
+    trimColor: '#f97316',
+    accentColor: '#fde047',
+    auraColor: '#f472b6',
+    scarfColor: '#9d174d',
+    capeColor: '#701a75',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: false,
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'ONSLAUGHT',
+    baseColor: '#9f1239',
+    gradientFrom: '#fb7185',
+    gradientTo: '#581c87',
+    trimColor: '#ea580c',
+    accentColor: '#fde047',
+    auraColor: '#f472b6',
+    scarfColor: '#701a75',
+    capeColor: '#581c87',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: true,
+    hornColor: '#f472b6',
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'SHURA',
+    baseColor: '#7f1d1d',
+    gradientFrom: '#fb7185',
+    gradientTo: '#3f0f12',
+    trimColor: '#fb923c',
+    accentColor: '#fde047',
+    auraColor: '#f43f5e',
+    scarfColor: '#7f1d1d',
+    capeColor: '#4c0519',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: true,
+    hornColor: '#fb7185',
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'SHURA',
+    baseColor: '#701a75',
+    gradientFrom: '#a21caf',
+    gradientTo: '#4c1d95',
+    trimColor: '#e11d48',
+    accentColor: '#fde047',
+    auraColor: '#c084fc',
+    scarfColor: '#86198f',
+    capeColor: '#4c1d95',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: true,
+    hornColor: '#f472b6',
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'SHURA',
+    baseColor: '#581c87',
+    gradientFrom: '#7c3aed',
+    gradientTo: '#312e81',
+    trimColor: '#fb7185',
+    accentColor: '#fef08a',
+    auraColor: '#a855f7',
+    scarfColor: '#6d28d9',
+    capeColor: '#312e81',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: true,
+    hornColor: '#f472b6',
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'SHURA',
+    baseColor: '#4c1d95',
+    gradientFrom: '#6d28d9',
+    gradientTo: '#1e1b4b',
+    trimColor: '#f97316',
+    accentColor: '#fde047',
+    auraColor: '#c4b5fd',
+    scarfColor: '#312e81',
+    capeColor: '#1e1b4b',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: true,
+    hornColor: '#e879f9',
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'SHURA',
+    baseColor: '#2e1065',
+    gradientFrom: '#4338ca',
+    gradientTo: '#1e1b4b',
+    trimColor: '#fb7185',
+    accentColor: '#fde047',
+    auraColor: '#a855f7',
+    scarfColor: '#3b0764',
+    capeColor: '#1e1b4b',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: true,
+    hornColor: '#fb7185',
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'SHURA',
+    baseColor: '#1e1b4b',
+    gradientFrom: '#312e81',
+    gradientTo: '#0f172a',
+    trimColor: '#fb7185',
+    accentColor: '#fde047',
+    auraColor: '#f472b6',
+    scarfColor: '#312e81',
+    capeColor: '#0f172a',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: true,
+    hornColor: '#fb7185',
+    hasPrayerBeads: false
+  },
+  {
+    tier: 'SHURA',
+    baseColor: '#0f172a',
+    gradientFrom: '#1f2937',
+    gradientTo: '#000000',
+    trimColor: '#f87171',
+    accentColor: '#fde047',
+    auraColor: '#f43f5e',
+    scarfColor: '#111827',
+    capeColor: '#020617',
+    hasKabuto: true,
+    hasScarf: true,
+    hasCape: true,
+    hasHorns: true,
+    hornColor: '#f87171',
+    hasPrayerBeads: false
+  }
+];
+
+const getBossVisualProfile = (level: number, fallbackColor: string): BossVisualProfile => {
+  const idx = Math.min(Math.max(level, 1), LEVEL_VISUAL_PRESETS.length) - 1;
+  const preset = LEVEL_VISUAL_PRESETS[idx] || LEVEL_VISUAL_PRESETS[LEVEL_VISUAL_PRESETS.length - 1];
+  return {
+    ...preset,
+    baseColor: preset.baseColor || fallbackColor || '#a855f7'
+  };
+};
 
 const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, level, onCombatEnd, updateHUD, setLog, consumeGourd, consumeEmblem }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -128,6 +488,11 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
   // Double Tap Tracking
   const lastKeyTime = useRef<{[key: string]: number}>({});
+
+  const bossVisualProfile = useMemo(
+    () => getBossVisualProfile(level, bossData.visualColor),
+    [level, bossData.visualColor]
+  );
 
   // --- VFX ---
   const spawnSparks = (x: number, y: number, count: number, color: string = '#fbbf24') => {
@@ -740,7 +1105,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       if (boss.attackTimer > 0) boss.attackTimer--;
       if (boss.attackTimer <= 0) {
          // Shuriken attack - mid range (150-350 pixels)
-         if (dist >= 150 && dist <= 350 && Math.random() < 0.15 + (level * 0.01)) {
+         const shurikenChance = 0.05 + Math.min(0.15, level * 0.005);
+         if (dist >= 150 && dist <= 350 && Math.random() < shurikenChance) {
              setLog("BOSS: 手里剑！");
              playCombatSound('THROW');
              const dir = boss.faceRight ? 1 : -1;
@@ -759,7 +1125,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                      });
                  }, i * 150); // Stagger throws
              }
-             boss.attackTimer = 60; // Cooldown
+             const cooldown = Math.max(70, 110 - level * 2);
+             boss.attackTimer = cooldown; // Longer cooldown to prevent spam
              return;
          }
 
@@ -1001,7 +1368,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                player.vy = isPerilousHit ? -8 : -4; 
 
                let dmg = bossData.stats.damage * props.damageMult;
-               if (isPerilousHit) dmg *= 3.0; 
+              if (isPerilousHit) dmg *= 2.35; 
                
                player.hp -= dmg;
                player.state = 'HIT';
@@ -1661,10 +2028,25 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.restore();
   };
 
-  const drawBossFigure = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, state: any, color: string, frame: number) => {
+  const drawBossFigure = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, state: any, color: string, frame: number, profile?: BossVisualProfile) => {
     ctx.save();
     ctx.translate(x + w/2, y + h); 
     const dir = state.faceRight ? 1 : -1;
+
+    if (profile && profile.hasCape) {
+        ctx.save();
+        ctx.globalAlpha = 0.6;
+        ctx.fillStyle = profile.capeColor || profile.baseColor;
+        const flutter = Math.sin(frame * 0.08) * 8;
+        ctx.beginPath();
+        ctx.moveTo(-w * 0.6, -h * 0.85);
+        ctx.quadraticCurveTo(-w * 0.95, -h * 0.2 + flutter, -w * 0.3, -h * 0.05);
+        ctx.lineTo(w * 0.3, -h * 0.05);
+        ctx.quadraticCurveTo(w * 0.95, -h * 0.25 - flutter, w * 0.55, -h * 0.9);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
 
     if (state.state === 'HIT') {
         ctx.globalAlpha = 0.7;
@@ -1715,13 +2097,20 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     }
     ctx.stroke();
 
-    ctx.fillStyle = '#374151';
+    ctx.fillStyle = profile?.trimColor || '#374151';
     ctx.fillRect(-22, -h*0.5, 20, 25); 
     ctx.fillRect(2, -h*0.5, 20, 25); 
 
 
     // --- BODY ---
-    ctx.fillStyle = color; 
+    let torsoFill: string | CanvasGradient = color;
+    if (profile && color === profile.baseColor) {
+        const torsoGradient = ctx.createLinearGradient(-w * 0.6, -h * 0.85, w * 0.6, -h * 0.5);
+        torsoGradient.addColorStop(0, profile.gradientFrom);
+        torsoGradient.addColorStop(1, profile.gradientTo);
+        torsoFill = torsoGradient;
+    }
+    ctx.fillStyle = torsoFill; 
     ctx.beginPath();
     ctx.moveTo(-w*0.5, -h*0.5); 
     ctx.lineTo(w*0.5, -h*0.5); 
@@ -1729,17 +2118,29 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.lineTo(-w*0.6, -h*0.85); 
     ctx.fill();
     
-    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = profile?.accentColor || 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(-w*0.5, -h*0.6);
     ctx.lineTo(w*0.5, -h*0.6);
     ctx.moveTo(-w*0.55, -h*0.7);
     ctx.lineTo(w*0.55, -h*0.7);
+    if (profile?.tier === 'ASHINA') {
+        for (let i = -3; i <= 3; i++) {
+            ctx.moveTo(i * (w * 0.15), -h * 0.85);
+            ctx.lineTo(i * (w * 0.12), -h * 0.5);
+        }
+    }
     ctx.stroke();
 
+    if (profile) {
+        ctx.fillStyle = profile.accentColor;
+        ctx.fillRect(-w * 0.5, -h * 0.58, w, 8);
+        ctx.fillRect(-w * 0.45, -h * 0.55, w * 0.3, 8);
+    }
+
     // --- SHOULDERS ---
-    ctx.fillStyle = '#1f2937'; 
+    ctx.fillStyle = profile?.trimColor || '#1f2937'; 
     ctx.fillRect(-w*0.8, -h*0.85, 15, 30);
     ctx.fillRect(w*0.5, -h*0.85, 15, 30);
 
@@ -1754,7 +2155,18 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.arc(0, -h*1.0, 16, Math.PI, 0);
     ctx.fill();
     
-    ctx.strokeStyle = '#fbbf24'; 
+    if (profile && profile.hasKabuto) {
+        ctx.fillStyle = profile.trimColor;
+        ctx.beginPath();
+        ctx.moveTo(-30, -h * 1.05);
+        ctx.quadraticCurveTo(0, -h * 1.25, 30, -h * 1.05);
+        ctx.lineTo(24, -h * 0.95);
+        ctx.lineTo(-24, -h * 0.95);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    ctx.strokeStyle = profile?.accentColor || '#fbbf24'; 
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(0, -h*1.05);
@@ -1762,7 +2174,55 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.moveTo(0, -h*1.05);
     ctx.lineTo(25, -h*1.25);
     ctx.stroke();
-    
+
+    if (profile && profile.hasHorns) {
+        ctx.fillStyle = profile.hornColor || profile.accentColor;
+        ctx.beginPath();
+        ctx.moveTo(-18, -h * 1.05);
+        ctx.lineTo(-30, -h * 1.2);
+        ctx.lineTo(-24, -h * 1.0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(18, -h * 1.05);
+        ctx.lineTo(30, -h * 1.2);
+        ctx.lineTo(24, -h * 1.0);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    if (profile && profile.hasScarf) {
+        ctx.fillStyle = profile.scarfColor || profile.accentColor;
+        ctx.beginPath();
+        ctx.ellipse(0, -h * 0.88, 26, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.save();
+        ctx.globalAlpha = 0.9;
+        ctx.beginPath();
+        ctx.moveTo(0, -h * 0.88);
+        ctx.quadraticCurveTo(-dir * 25, -h * 0.95, -dir * 40, -h * 0.78 - Math.sin(frame * 0.15) * 5);
+        ctx.lineTo(-dir * 20, -h * 0.75);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+
+    if (profile && profile.hasPrayerBeads) {
+        ctx.strokeStyle = '#fef9c3';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(-15, -h * 0.85);
+        ctx.quadraticCurveTo(0, -h * 0.75, 15, -h * 0.85);
+        ctx.stroke();
+        ctx.fillStyle = '#fef3c7';
+        for (let i = -15; i <= 15; i += 10) {
+            ctx.beginPath();
+            ctx.arc(i, -h * 0.82, 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
     if (state.state === 'ATTACK' || state.state === 'WINDUP') {
         ctx.fillStyle = '#ef4444';
         ctx.beginPath();
@@ -2232,7 +2692,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.restore();
     });
 
-    let bossColor = bossData.visualColor || '#a855f7';
+    let bossColor = bossVisualProfile.baseColor;
     if (boss.state === 'RECOVER') bossColor = '#71717a'; 
     else if (boss.state === 'WINDUP') bossColor = boss.attackType === 'HEAVY' ? '#dc2626' : '#fbbf24';
     else if (boss.state === 'BLOCK') bossColor = '#9ca3af'; 
@@ -2242,11 +2702,11 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.save();
         ctx.globalAlpha = 0.2;
         ctx.translate(-boss.vx * 1.5, 0); 
-        drawBossFigure(ctx, boss.x, boss.y, boss.width, boss.height, boss, '#9ca3af', frame);
+        drawBossFigure(ctx, boss.x, boss.y, boss.width, boss.height, boss, '#9ca3af', frame, bossVisualProfile);
         ctx.restore();
     }
 
-    drawBossFigure(ctx, boss.x, boss.y, boss.width, boss.height, boss, bossColor, frame);
+    drawBossFigure(ctx, boss.x, boss.y, boss.width, boss.height, boss, bossColor, frame, bossVisualProfile);
     
     if (boss.state === 'RECOVER') {
         ctx.fillStyle = '#fff';
