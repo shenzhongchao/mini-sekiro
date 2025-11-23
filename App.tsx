@@ -1,11 +1,149 @@
 
 import React, { useState, useEffect } from 'react';
-import { GameState, BossData, PlayerStats, Item, Rarity } from './types';
+import { GameState, BossData, PlayerStats, Item, Rarity, ItemCategory, ItemStats } from './types';
 import { generateBossForLevel, generateLoot } from './services/geminiService';
 import CombatCanvas from './components/CombatCanvas';
 import UIOverlay from './components/UIOverlay';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { initAudio } from './utils/audio';
+
+const BEAD_FRAGMENT_THRESHOLD = 4;
+const BEAD_HP_BONUS = 25;
+const BEAD_POSTURE_BONUS = 12;
+
+const clamp = (value: number, minValue: number) => Math.max(value, minValue);
+
+const applyStatDelta = (player: PlayerStats, stats: ItemStats, factor = 1): PlayerStats => {
+  if (!stats) return player;
+  let next: PlayerStats = { ...player };
+  if (stats.attack) {
+    next.attackPower = clamp(next.attackPower + factor * stats.attack, 1);
+  }
+  if (stats.vitality) {
+    next.maxHp = clamp(next.maxHp + factor * stats.vitality, 1);
+    if (factor > 0) {
+      next.hp = Math.min(next.maxHp, next.hp + stats.vitality * factor);
+    } else {
+      next.hp = Math.min(next.hp, next.maxHp);
+    }
+  }
+  if (stats.posture) {
+    next.maxPosture = clamp(next.maxPosture + factor * stats.posture, 10);
+    next.posture = Math.min(next.posture, next.maxPosture);
+  }
+  if (stats.postureRecovery) {
+    const newBonus = next.postureRecoveryBonus + factor * stats.postureRecovery;
+    next.postureRecoveryBonus = parseFloat(newBonus.toFixed(3));
+  }
+  return next;
+};
+
+const equipItemById = (
+  player: PlayerStats,
+  itemId: string | undefined,
+  type: 'TALISMAN' | 'ENGRAVING'
+): PlayerStats => {
+  let next: PlayerStats = { ...player };
+  const pool = type === 'TALISMAN' ? next.talismans : next.engravings;
+  const currentActiveId = type === 'TALISMAN' ? player.activeTalismanId : player.activeEngravingId;
+
+  if (currentActiveId) {
+    const currentItem = pool.find(t => t.id === currentActiveId);
+    if (currentItem) {
+      next = applyStatDelta(next, currentItem.stats, -1);
+    }
+  }
+
+  if (itemId) {
+    const target = pool.find(t => t.id === itemId);
+    if (target) {
+      next = applyStatDelta(next, target.stats, 1);
+      if (type === 'TALISMAN') {
+        next.activeTalismanId = target.id;
+      } else {
+        next.activeEngravingId = target.id;
+      }
+    } else if (type === 'TALISMAN') {
+      next.activeTalismanId = undefined;
+    } else {
+      next.activeEngravingId = undefined;
+    }
+  } else if (type === 'TALISMAN') {
+    next.activeTalismanId = undefined;
+  } else {
+    next.activeEngravingId = undefined;
+  }
+
+  return next;
+};
+
+const integrateLoot = (player: PlayerStats, loot: Item): PlayerStats => {
+  let next: PlayerStats = {
+    ...player,
+    equipment: [...player.equipment, loot]
+  };
+
+  switch (loot.category) {
+    case ItemCategory.BEAD_FRAGMENT: {
+      const qty = loot.quantity || 1;
+      let totalFragments = next.beadFragments + qty;
+      while (totalFragments >= BEAD_FRAGMENT_THRESHOLD) {
+        totalFragments -= BEAD_FRAGMENT_THRESHOLD;
+        next = applyStatDelta(next, { vitality: BEAD_HP_BONUS, posture: BEAD_POSTURE_BONUS }, 1);
+      }
+      next.beadFragments = totalFragments;
+      break;
+    }
+    case ItemCategory.BATTLE_MEMORY: {
+      next.battleMemories = [...next.battleMemories, loot];
+      next = applyStatDelta(next, loot.stats, 1);
+      break;
+    }
+    case ItemCategory.TALISMAN: {
+      next.talismans = [...next.talismans, loot];
+      if (!next.activeTalismanId) {
+        next = equipItemById(next, loot.id, 'TALISMAN');
+      }
+      break;
+    }
+    case ItemCategory.ENGRAVING: {
+      next.engravings = [...next.engravings, loot];
+      if (!next.activeEngravingId) {
+        next = equipItemById(next, loot.id, 'ENGRAVING');
+      }
+      break;
+    }
+    case ItemCategory.NINJA_TOOL_MATERIAL:
+    case ItemCategory.RELIC: {
+      next = applyStatDelta(next, loot.stats, 1);
+      break;
+    }
+    case ItemCategory.SUGAR: {
+      // Consumables：暂存于背包，待未来实现使用逻辑
+      break;
+    }
+    case ItemCategory.GOURD_SEED: {
+      const newMax = Math.min(next.maxGourds + 1, 10);
+      const delta = newMax - next.maxGourds;
+      if (delta > 0) {
+        next.maxGourds = newMax;
+        next.gourds = newMax;
+      }
+      break;
+    }
+    case ItemCategory.EMBLEM_POUCH: {
+      const amount = loot.quantity || 5;
+      next.maxSpiritEmblems += Math.ceil(amount / 2);
+      next.spiritEmblems = Math.min(next.maxSpiritEmblems, next.spiritEmblems + amount);
+      break;
+    }
+    default:
+      next = applyStatDelta(next, loot.stats, 1);
+      break;
+  }
+
+  return next;
+};
 
 const App: React.FC = () => {
   // --- State ---
@@ -19,6 +157,13 @@ const App: React.FC = () => {
     maxPosture: 100, // Adjusted base posture for tighter gameplay
     attackPower: 10, // Slightly lowered base attack to make loot more meaningful
     equipment: [],
+    beadFragments: 0,
+    battleMemories: [],
+    talismans: [],
+    engravings: [],
+    postureRecoveryBonus: 0,
+    maxGourds: 3,
+    maxSpiritEmblems: 15,
     gold: 0,
     currentLevel: 1,
     gourds: 3, 
@@ -39,6 +184,14 @@ const App: React.FC = () => {
 
   // --- Actions ---
 
+  const changeTalisman = (itemId: string) => {
+    setPlayerStats(prev => equipItemById(prev, itemId || undefined, 'TALISMAN'));
+  };
+
+  const changeEngraving = (itemId: string) => {
+    setPlayerStats(prev => equipItemById(prev, itemId || undefined, 'ENGRAVING'));
+  };
+
   const startLevel = async (level: number) => {
     initAudio(); // Initialize audio context on user gesture
     setGameState(GameState.LOADING_BOSS);
@@ -55,7 +208,13 @@ const App: React.FC = () => {
         bHp: boss.stats.maxHp, bMaxHp: boss.stats.maxHp, bPost: 0, bMaxPost: boss.stats.maxPosture
       });
       // Pass fresh stats to combat (ensure HP is full, gourds reset, emblems reset)
-      setPlayerStats(prev => ({...prev, hp: prev.maxHp, posture: 0, gourds: 3, spiritEmblems: 15}));
+      setPlayerStats(prev => ({
+        ...prev,
+        hp: prev.maxHp,
+        posture: 0,
+        gourds: prev.maxGourds,
+        spiritEmblems: prev.maxSpiritEmblems
+      }));
       setGameState(GameState.COMBAT);
     } catch (e) {
       setLoadingMessage("召唤失败。迷雾太浓了。");
@@ -89,14 +248,10 @@ const App: React.FC = () => {
       const loot = await generateLoot(selectedLevel);
       setDroppedItem(loot);
       
-      setPlayerStats(prev => ({
-        ...prev,
-        currentLevel: newMaxLevel,
-        equipment: [...prev.equipment, loot],
-        attackPower: prev.attackPower + (loot.stats.attack || 0),
-        maxHp: prev.maxHp + (loot.stats.vitality || 0),
-        maxPosture: prev.maxPosture + (loot.stats.posture || 0)
-      }));
+      setPlayerStats(prev => {
+        const withLevel = { ...prev, currentLevel: newMaxLevel };
+        return integrateLoot(withLevel, loot);
+      });
     } else {
       setGameState(GameState.DEFEAT);
     }
@@ -159,11 +314,11 @@ const App: React.FC = () => {
     ];
 
     return (
-      <div className="min-h-screen bg-zinc-900 p-8 text-zinc-100">
+      <div className="h-screen bg-zinc-900 p-8 text-zinc-100 overflow-y-auto">
         <button onClick={() => setGameState(GameState.MENU)} className="mb-6 text-amber-500 hover:underline">← 返回 (Back)</button>
         <h2 className="text-3xl font-serif text-zinc-200 mb-6 border-b border-zinc-700 pb-2">属性与背包</h2>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 auto-rows-min pb-12">
           {/* Stats Chart */}
           <div className="bg-zinc-800 p-6 rounded shadow-lg">
             <h3 className="text-xl font-bold text-amber-500 mb-4">玩家属性</h3>
@@ -180,8 +335,8 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Equipment List */}
-          <div className="bg-zinc-800 p-6 rounded shadow-lg max-h-[60vh] overflow-y-auto">
+         {/* Equipment List */}
+          <div className="bg-zinc-800 p-6 rounded shadow-lg">
              <h3 className="text-xl font-bold text-amber-500 mb-4">已获得装备</h3>
              {playerStats.equipment.length === 0 ? (
                <p className="text-zinc-500 italic">暂无装备。击败Boss掉落。</p>
@@ -194,10 +349,13 @@ const App: React.FC = () => {
                           item.rarity === Rarity.LEGENDARY ? 'text-orange-500' :
                           item.rarity === Rarity.EPIC ? 'text-purple-400' :
                           item.rarity === Rarity.RARE ? 'text-blue-400' : 'text-zinc-400'
-                        }`}>{item.name}</span>
-                        <span className="text-xs bg-zinc-800 px-2 py-1 rounded text-zinc-500">{item.rarity}</span>
+                        }`}>{item.name}{item.quantity ? ` x${item.quantity}` : ''}</span>
+                        <span className="text-xs bg-zinc-800 px-2 py-1 rounded text-zinc-500">{item.category}</span>
                      </div>
                      <p className="text-xs text-zinc-500 italic mt-1">{item.description}</p>
+                     {item.effectSummary && (
+                        <p className="text-xs text-amber-400 mt-1">{item.effectSummary}</p>
+                     )}
                      <div className="text-xs text-zinc-400 mt-2 grid grid-cols-2 gap-2">
                        {item.stats.attack && <span>攻击 +{item.stats.attack}</span>}
                        {item.stats.vitality && <span>体力 +{item.stats.vitality}</span>}
@@ -208,6 +366,83 @@ const App: React.FC = () => {
                  ))}
                </ul>
              )}
+          </div>
+
+          <div className="bg-zinc-800 p-6 rounded shadow-lg">
+            <h3 className="text-xl font-bold text-amber-500 mb-4">修行进度</h3>
+            <p className="text-sm text-amber-300 mb-2">佛珠碎片：{playerStats.beadFragments}/{BEAD_FRAGMENT_THRESHOLD}</p>
+            <p className="text-sm text-zinc-300 mb-2">葫芦容量：{playerStats.maxGourds}  瓶 &nbsp; (现有 {playerStats.gourds})</p>
+            <p className="text-sm text-zinc-300 mb-4">纸人上限：{playerStats.maxSpiritEmblems}  (现有 {playerStats.spiritEmblems})</p>
+            <div>
+              <h4 className="text-sm text-zinc-300 mb-1">战斗记忆</h4>
+              {playerStats.battleMemories.length === 0 ? (
+                <p className="text-xs text-zinc-500 italic">尚无战斗记忆。</p>
+              ) : (
+                <ul className="text-xs text-zinc-400 space-y-1">
+                  {playerStats.battleMemories.map(memory => (
+                    <li key={memory.id}>
+                      <span className="text-amber-400">{memory.name}</span> · {memory.effectSummary || '永久增加攻击力'}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-zinc-800 p-6 rounded shadow-lg lg:col-span-2">
+            <h3 className="text-xl font-bold text-amber-500 mb-4">护符与铭刻</h3>
+            <div className="mb-4">
+              <h4 className="text-sm text-zinc-300 mb-1">护符槽</h4>
+              {playerStats.talismans.length === 0 ? (
+                <p className="text-xs text-zinc-500 italic">暂无护符掉落。</p>
+              ) : (
+                <div className="space-y-2">
+                  <select
+                    value={playerStats.activeTalismanId || ''}
+                    onChange={e => changeTalisman(e.target.value)}
+                    className="w-full bg-zinc-900 border border-zinc-700 text-sm p-2 rounded"
+                  >
+                    <option value="">（无）</option>
+                    {playerStats.talismans.map(t => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                  {playerStats.activeTalismanId ? (
+                    <div className="text-xs text-zinc-400">
+                      {playerStats.talismans.find(t => t.id === playerStats.activeTalismanId)?.effectSummary}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-zinc-500">请选择一个护符。</p>
+                  )}
+                </div>
+              )}
+            </div>
+            <div>
+              <h4 className="text-sm text-zinc-300 mb-1">铭刻槽</h4>
+              {playerStats.engravings.length === 0 ? (
+                <p className="text-xs text-zinc-500 italic">暂无铭刻掉落。</p>
+              ) : (
+                <div className="space-y-2">
+                  <select
+                    value={playerStats.activeEngravingId || ''}
+                    onChange={e => changeEngraving(e.target.value)}
+                    className="w-full bg-zinc-900 border border-zinc-700 text-sm p-2 rounded"
+                  >
+                    <option value="">（无）</option>
+                    {playerStats.engravings.map(e => (
+                      <option key={e.id} value={e.id}>{e.name}</option>
+                    ))}
+                  </select>
+                  {playerStats.activeEngravingId ? (
+                    <div className="text-xs text-zinc-400">
+                      {playerStats.engravings.find(e => e.id === playerStats.activeEngravingId)?.effectSummary}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-zinc-500">请选择一个铭刻。</p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

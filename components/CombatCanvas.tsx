@@ -535,6 +535,16 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             r1.y + r1.height > r2.y);
   };
 
+  const isPlayerFacingBoss = () => {
+    const { player, boss } = gameState.current;
+    const playerCenter = player.x + player.width / 2;
+    const bossCenter = boss.x + boss.width / 2;
+    if (player.facingRight) {
+      return bossCenter >= playerCenter;
+    }
+    return bossCenter <= playerCenter;
+  };
+
   // Check if boss is cornered (near edges of arena)
   const isBossCornered = (boss: any) => {
     const CORNER_THRESHOLD = 120;
@@ -999,7 +1009,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                 p.vx = -p.vx * 1.2;
                 p.owner = 'player'; // Now it's player's projectile
                 continue;
-            } else if (controls.current.block) {
+            } else if (controls.current.block && isPlayerFacingBoss()) {
                 // Block shuriken
                 setLog("格挡手里剑");
                 playCombatSound('BLOCK');
@@ -1024,10 +1034,10 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     }
 
     // --- PLAYER POSTURE RECOVERY ---
-    const equipRecovery = playerStats.equipment.reduce((acc, item) => acc + (item.stats.postureRecovery || 0), 0);
+    const equipRecovery = playerStats.postureRecoveryBonus || 0;
     const playerHpPercent = player.hp / player.maxHp;
     let pRecovery = 0.02 + (0.06 * playerHpPercent) + equipRecovery; 
-    if (controls.current.block && player.state !== 'HIT' && player.state !== 'ATTACK') {
+    if (controls.current.block && player.state !== 'HIT' && player.state !== 'ATTACK' && isPlayerFacingBoss()) {
       pRecovery *= 2.0; 
     }
     if (player.posture > 0) {
@@ -1183,7 +1193,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             } else if (attackRng < thrustChance + sweepChance + 0.35) {
               boss.attackType = 'HEAVY';
               boss.isPerilous = true;
-              setLog("危！下段攻击！");
+              setLog("危！格挡无效！");
               playCombatSound('PERILOUS');
             } else {
               boss.attackType = 'LIGHT';
@@ -1359,7 +1369,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                   return; 
                }
 
-             } else if (controls.current.block && !boss.isPerilous && !isSweep) {
+             } else if (controls.current.block && !boss.isPerilous && !isSweep && isPlayerFacingBoss()) {
                setLog("防御");
                playCombatSound('BLOCK');
                spawnSparks((player.x + boss.x)/2, player.y + 30, 10, '#a1a1aa');
@@ -1398,7 +1408,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                player.vy = isSweep ? -12 : (isPerilousHit ? -8 : -4); 
 
                let dmg = bossData.stats.damage * props.damageMult;
-              if (isPerilousHit) dmg *= 2.35; 
+              if (isPerilousHit) dmg *= 1.8; 
 
                player.hp -= dmg;
                player.state = 'HIT';
@@ -1602,6 +1612,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     const isRun = state.state === 'RUN';
     const isAttack = state.state === 'ATTACK';
+    const facingBoss = isPlayerFacingBoss();
     const isBlock = state.state === 'BLOCK' || state.parryTimer > 0 || (controls.current.block && state.state !== 'HIT' && state.state !== 'ATTACK' && state.state !== 'HEAL' && state.state !== 'FLOATING_PASSAGE' && state.state !== 'THRUST_CHARGE' && state.state !== 'THRUST_RELEASE' && state.state !== 'DASH');
     const isThrust = state.state === 'THRUST_CHARGE' || state.state === 'THRUST_RELEASE';
     const dir = state.facingRight ? 1 : -1;

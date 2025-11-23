@@ -16,17 +16,35 @@ export enum Rarity {
 }
 
 // Interfaces
+export enum ItemCategory {
+  BEAD_FRAGMENT = '佛珠碎片',
+  BATTLE_MEMORY = '战斗记忆',
+  NINJA_TOOL_MATERIAL = '忍具素材',
+  TALISMAN = '护符',
+  ENGRAVING = '铭刻',
+  SUGAR = '药糖',
+  RELIC = '遗物',
+  GOURD_SEED = '葫芦种子',
+  EMBLEM_POUCH = '纸人囊'
+}
+
+export interface ItemStats {
+  attack?: number;
+  vitality?: number;
+  posture?: number;
+  postureRecovery?: number;
+}
+
 export interface Item {
   id: string;
   name: string;
   description: string;
   rarity: Rarity;
-  stats: {
-    attack?: number;
-    vitality?: number;
-    posture?: number;
-    postureRecovery?: number;
-  };
+  category: ItemCategory;
+  stats: ItemStats;
+  quantity?: number;
+  effectSummary?: string;
+  metadata?: Record<string, any>;
 }
 
 export interface PlayerStats {
@@ -36,6 +54,15 @@ export interface PlayerStats {
   maxPosture: number;
   attackPower: number;
   equipment: Item[];
+  beadFragments: number;
+  battleMemories: Item[];
+  talismans: Item[];
+  engravings: Item[];
+  activeTalismanId?: string;
+  activeEngravingId?: string;
+  postureRecoveryBonus: number;
+  maxGourds: number;
+  maxSpiritEmblems: number;
   gold: number;
   currentLevel: number; // Highest unlocked level
   gourds: number; // Healing charges
