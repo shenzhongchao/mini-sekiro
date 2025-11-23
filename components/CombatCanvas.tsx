@@ -18,6 +18,7 @@ interface CombatCanvasProps {
 const FPS = 60;
 const GRAVITY = 0.6;
 const GROUND_Y = 350;
+const ARENA_WIDTH = 1000;
 const PARRY_WINDOW = 26; 
 const HEAL_DURATION = 45; 
 
@@ -39,6 +40,7 @@ const ATK_LIGHT = { windup: 35, active: 15, recover: 40, damageMult: 0.8, range:
 const ATK_HEAVY = { windup: 80, active: 25, recover: 140, damageMult: 1.5, range: 160 };
 const ATK_COMBO = { windup: 25, active: 12, recover: 30, damageMult: 0.7, range: 120 };
 const ATK_THRUST = { windup: 45, active: 8, recover: 60, damageMult: 1.3, range: 200 }; // Fast lunge, long range, narrow hitbox
+const ATK_SWEEP = { windup: 60, active: 18, recover: 90, damageMult: 1.1, range: 220 }; // Low horizontal sweep, unblockable
 
 type BossVisualTier = 'ASHINA' | 'ONSLAUGHT' | 'SHURA';
 
@@ -463,7 +465,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       dodgeCooldown: 0,
       maxWindup: 0,
       currentMove: '',
-      attackType: 'LIGHT' as 'LIGHT' | 'HEAVY' | 'COMBO' | 'THRUST',
+      attackType: 'LIGHT' as 'LIGHT' | 'HEAVY' | 'COMBO' | 'THRUST' | 'SWEEP',
       moveQueue: [] as string[],
       isPerilous: false,
       paceTimer: 0,
@@ -536,7 +538,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
   // Check if boss is cornered (near edges of arena)
   const isBossCornered = (boss: any) => {
     const CORNER_THRESHOLD = 120;
-    return boss.x < CORNER_THRESHOLD || boss.x > (800 - CORNER_THRESHOLD - boss.width);
+    return boss.x < CORNER_THRESHOLD || boss.x > (ARENA_WIDTH - CORNER_THRESHOLD - boss.width);
   };
 
   // Boss counter-attack when being combo'd
@@ -552,9 +554,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     boss.comboCounter = 0; // Reset combo counter
 
     // Burst away from corner
-    const isLeftCorner = boss.x < 400;
+    const isLeftCorner = boss.x < ARENA_WIDTH / 2;
     boss.vx = (isLeftCorner ? 1 : -1) * 12;
-    boss.vy = -10;
+    boss.vy = -12;
 
     setLog(boss.isPerilous ? "BOSS: 危险反击！" : "BOSS: 愤怒反击！");
     playCombatSound('PERILOUS');
@@ -677,7 +679,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     // --- SAKURA SPAWN LOGIC ---
     if (state.frame % 8 === 0) { 
         state.sakura.push({
-            x: Math.random() * 800,
+            x: Math.random() * ARENA_WIDTH,
             y: -20,
             vx: (Math.random() - 0.5) * 2, 
             vy: 1 + Math.random() * 1.5, 
@@ -787,7 +789,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             }
 
             if (controls.current.jump && player.y === GROUND_Y) {
-                player.vy = -12;
+                player.vy = -14;
             }
         }
     }
@@ -808,7 +810,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       player.vy = 0; 
     }
     if (player.x < 0) { player.x = 0; player.vx = 0; }
-    if (player.x > 770) { player.x = 770; player.vx = 0; }
+    if (player.x > ARENA_WIDTH - player.width) { player.x = ARENA_WIDTH - player.width; player.vx = 0; }
 
     if (player.attackTimer > 0) player.attackTimer--;
     if (player.parryTimer > 0) player.parryTimer--;
@@ -1016,7 +1018,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             continue;
         }
 
-        if (p.life <= 0 || p.x < 0 || p.x > 800 || p.y > GROUND_Y + 100) {
+    if (p.life <= 0 || p.x < 0 || p.x > ARENA_WIDTH || p.y > GROUND_Y + 100) {
             state.projectiles.splice(i, 1);
         }
     }
@@ -1058,7 +1060,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       boss.vy = 0;
     }
     if (boss.x < 0) { boss.x = 0; boss.vx = 0; }
-    if (boss.x > 750) { boss.x = 750; boss.vx = 0; }
+    if (boss.x > ARENA_WIDTH - boss.width) { boss.x = ARENA_WIDTH - boss.width; boss.vx = 0; }
     
     // *** REACTIVE LOGIC ***
     const playerIsThreat = (player.state === 'ATTACK' || player.state === 'FLOATING_PASSAGE' || player.state === 'THRUST_RELEASE') && player.attackTimer > 5;
@@ -1135,7 +1137,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
              boss.attackType = 'HEAVY';
              boss.maxWindup = 45;
              boss.attackTimer = 45;
-             boss.vy = -12;
+             boss.vy = -14;
              boss.vx = (boss.faceRight ? 1 : -1) * 10;
              setLog("BOSS: 飞身跃入");
              spawnDashTrail(boss);
@@ -1146,10 +1148,17 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             boss.state = 'PACE';
             boss.paceTimer = 40 + Math.random() * 40;
          }
-        else if (dist < 250 && Math.random() < bossData.stats.aggression) {
+         else if (dist < 250 && Math.random() < bossData.stats.aggression) {
            boss.state = 'WINDUP';
            const attackRng = Math.random();
            const thrustChance = calculateBossThrustChance(player, boss, dist, level, state.frame);
+           const preferSweep = dist < 140;
+           let sweepChance = 0;
+           if (level > 5) {
+             const base = preferSweep ? 0.12 : 0.04;
+             const scaling = Math.min(0.12, (level - 5) * 0.01);
+             sweepChance = base + scaling;
+           }
 
            if (attackRng < thrustChance) {
              boss.attackType = 'THRUST';
@@ -1162,11 +1171,16 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
              } else {
                setLog("BOSS: 突刺！");
              }
-           } else if (attackRng < thrustChance + 0.25) {
+           } else if (sweepChance > 0 && attackRng < thrustChance + sweepChance) {
+             boss.attackType = 'SWEEP';
+             boss.isPerilous = true;
+             setLog("危！横扫！跳起或后退！");
+             playCombatSound('PERILOUS');
+           } else if (attackRng < thrustChance + sweepChance + 0.25) {
              boss.attackType = 'HEAVY';
              boss.isPerilous = false;
              setLog("BOSS 蓄力重击！");
-           } else if (attackRng < thrustChance + 0.35) {
+            } else if (attackRng < thrustChance + sweepChance + 0.35) {
               boss.attackType = 'HEAVY';
               boss.isPerilous = true;
               setLog("危！下段攻击！");
@@ -1180,7 +1194,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
               }
             }
             const props = boss.attackType === 'THRUST' ? ATK_THRUST :
-                          (boss.attackType === 'HEAVY' ? ATK_HEAVY : ATK_LIGHT);
+                          (boss.attackType === 'HEAVY' ? ATK_HEAVY :
+                          (boss.attackType === 'COMBO' ? ATK_COMBO :
+                          (boss.attackType === 'SWEEP' ? ATK_SWEEP : ATK_LIGHT)));
             const speedMod = Math.max(0, (level * 1.5));
             boss.maxWindup = Math.max(20, props.windup - speedMod);
             boss.attackTimer = boss.maxWindup; 
@@ -1195,7 +1211,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                if (Math.random() < 0.05) {
                  boss.state = 'PACE';
                  boss.paceTimer = 20;
-                 boss.vy = -5; 
+                 boss.vy = -7;
                  boss.vx = (boss.faceRight ? -1 : 1) * 8; 
                }
             }
@@ -1241,7 +1257,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       // If cornered during windup, reposition
       const isCornered = isBossCornered(boss);
       if (isCornered && boss.attackTimer > boss.maxWindup * 0.5) {
-        const isLeftCorner = boss.x < 400;
+        const isLeftCorner = boss.x < ARENA_WIDTH / 2;
         // Slide toward center during windup
         boss.vx += (isLeftCorner ? 1 : -1) * 0.8;
       }
@@ -1250,13 +1266,16 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         boss.state = 'ATTACK';
         const props = boss.attackType === 'THRUST' ? ATK_THRUST :
                       (boss.attackType === 'HEAVY' ? ATK_HEAVY :
-                      (boss.attackType === 'COMBO' ? ATK_COMBO : ATK_LIGHT));
+                      (boss.attackType === 'COMBO' ? ATK_COMBO :
+                      (boss.attackType === 'SWEEP' ? ATK_SWEEP : ATK_LIGHT)));
         boss.attackTimer = props.active;
         playCombatSound('SWING');
 
         // Thrust has much faster lunge speed
         const lungeSpeed = boss.attackType === 'THRUST' ? 18 :
-                          (boss.attackType === 'HEAVY' ? 9 : (boss.attackType === 'COMBO' ? 7 : 5));
+                          (boss.attackType === 'HEAVY' ? 9 :
+                          (boss.attackType === 'SWEEP' ? 11 :
+                          (boss.attackType === 'COMBO' ? 7 : 5)));
         const dir = boss.faceRight ? 1 : -1;
         if (boss.y === GROUND_Y) {
              boss.vx = dir * lungeSpeed;
@@ -1264,7 +1283,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
              const jumpChance = boss.attackType === 'THRUST' ? 0 :
                                (isCornered ? 0.6 : (boss.attackType === 'HEAVY' ? 0.3 : 0));
              if (Math.random() < jumpChance) {
-                 boss.vy = -10;
+                 boss.vy = -12;
              }
         }
       }
@@ -1273,13 +1292,20 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       boss.attackTimer--;
       const props = boss.attackType === 'THRUST' ? ATK_THRUST :
                     (boss.attackType === 'HEAVY' ? ATK_HEAVY :
-                    (boss.attackType === 'COMBO' ? ATK_COMBO : ATK_LIGHT));
+                    (boss.attackType === 'COMBO' ? ATK_COMBO :
+                    (boss.attackType === 'SWEEP' ? ATK_SWEEP : ATK_LIGHT)));
       const hitFrame = Math.floor(props.active / 2);
 
       if (boss.attackTimer === hitFrame) {
         // Thrust has narrow but long hitbox
         const isThrust = boss.attackType === 'THRUST';
-        const attackBox = {
+        const isSweep = boss.attackType === 'SWEEP';
+        const attackBox = isSweep ? {
+          x: boss.x + (boss.faceRight ? -20 : boss.width - props.range + 20),
+          y: boss.y + boss.height - 35,
+          width: props.range,
+          height: 45
+        } : {
           x: boss.x + (boss.faceRight ? 0 : -props.range + boss.width),
           y: boss.y + (isThrust ? 20 : -40), // Thrust targets body center
           width: props.range,
@@ -1302,7 +1328,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                   player.state = 'HIT';
                   player.thrustCharge = 0;
                 }
-             } else if (player.parryTimer > 0) {
+             } else if (player.parryTimer > 0 && !isSweep) {
                setLog("完美弹反！");
                playCombatSound('PARRY');
                spawnSparks((player.x + boss.x)/2, player.y + 30, 50, '#fcd34d');
@@ -1333,7 +1359,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                   return; 
                }
 
-             } else if (controls.current.block && !boss.isPerilous) {
+             } else if (controls.current.block && !boss.isPerilous && !isSweep) {
                setLog("防御");
                playCombatSound('BLOCK');
                spawnSparks((player.x + boss.x)/2, player.y + 30, 10, '#a1a1aa');
@@ -1358,18 +1384,22 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
              if (damageTaken) {
                const isPerilousHit = boss.isPerilous;
-               setLog(isPerilousHit ? "危技命中！(重伤)" : "受到伤害");
+               if (isSweep) {
+                 setLog("被横扫掀飞！");
+               } else {
+                 setLog(isPerilousHit ? "危技命中！(重伤)" : "受到伤害");
+               }
                playCombatSound('HIT');
                spawnSparks(player.x, player.y, isPerilousHit ? 60 : 20, '#ef4444');
                triggerShake(isPerilousHit ? 30 : 10);
                triggerHitStop(isPerilousHit ? 12 : 5);
                
                player.vx = boss.faceRight ? (isPerilousHit ? 15 : 8) : (isPerilousHit ? -15 : -8);
-               player.vy = isPerilousHit ? -8 : -4; 
+               player.vy = isSweep ? -12 : (isPerilousHit ? -8 : -4); 
 
                let dmg = bossData.stats.damage * props.damageMult;
               if (isPerilousHit) dmg *= 2.35; 
-               
+
                player.hp -= dmg;
                player.state = 'HIT';
                player.attackTimer = isPerilousHit ? 60 : 25; 
@@ -1390,7 +1420,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
            boss.state = 'RECOVER';
            boss.attackTimer = props.recover; 
            if (Math.random() < 0.3) {
-               boss.vy = -7;
+               boss.vy = -9;
                boss.vx = (boss.faceRight ? -1 : 1) * 8;
            }
         }
@@ -1419,9 +1449,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
               boss.state = 'DODGE';
               boss.dodgeTimer = 18;
               boss.dodgeCooldown = 60;
-              const isLeftCorner = boss.x < 400;
+        const isLeftCorner = boss.x < ARENA_WIDTH / 2;
               boss.vx = (isLeftCorner ? 1 : -1) * 18; // Fast escape
-              boss.vy = -8; // Jump away
+              boss.vy = -10; // Jump away
               setLog("BOSS: 脱困！");
               playCombatSound('DASH');
               spawnDashTrail(boss);
@@ -1461,7 +1491,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       triggerHitStop(40);
       boss.state = 'HIT';
       boss.attackTimer = 120; 
-      boss.vy = -5; 
+      boss.vy = -7; 
     }
     if (boss.hp <= 0) {
       state.gameOver = true;
@@ -2245,6 +2275,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     if (state.state === 'WINDUP') {
         const isThrust = state.attackType === 'THRUST';
+        const isSweep = state.attackType === 'SWEEP';
 
         if (isThrust) {
             // Thrust windup - sword pulled back, aimed forward
@@ -2303,6 +2334,71 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                 ctx.fill();
                 ctx.globalAlpha = 1.0;
             }
+        } else if (isSweep) {
+            // Sweep windup - boss crouches, blade dragging near the floor
+            const sweepHandY = handY + 50;
+            const sweepTipX = handX + (dir * 120);
+            const sweepTipY = sweepHandY + 25;
+
+            // Lower torso hint
+            ctx.save();
+            ctx.fillStyle = '#111827';
+            ctx.globalAlpha = 0.3;
+            ctx.fillRect(-w * 0.45, -h * 0.4, w * 0.9, h * 0.2);
+            ctx.restore();
+
+            ctx.strokeStyle = '#1f2937';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(handX, handY);
+            ctx.lineTo(handX + 25*dir, sweepHandY);
+            ctx.stroke();
+
+            ctx.fillStyle = '#374151';
+            ctx.beginPath();
+            ctx.ellipse(handX + 18*dir, sweepHandY - 5, 6, 8, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = '#6b7280';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(handX + 20*dir, sweepHandY);
+            ctx.lineTo(sweepTipX, sweepTipY);
+            ctx.stroke();
+
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(handX + 25*dir, sweepHandY + 4);
+            ctx.lineTo(sweepTipX + 5*dir, sweepTipY + 2);
+            ctx.stroke();
+
+            ctx.fillStyle = '#f4f4f5';
+            ctx.beginPath();
+            ctx.moveTo(sweepTipX + 8*dir, sweepTipY + 2);
+            ctx.lineTo(sweepTipX - 2*dir, sweepTipY - 4);
+            ctx.lineTo(sweepTipX - 2*dir, sweepTipY + 6);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.strokeStyle = state.isPerilous ? '#b91c1c' : '#f59e0b';
+            ctx.globalAlpha = 0.4;
+            ctx.lineWidth = 18;
+            ctx.beginPath();
+            ctx.moveTo(handX + 15*dir, sweepHandY + 5);
+            ctx.quadraticCurveTo(handX + 80*dir, sweepHandY + 30, sweepTipX + 25*dir, sweepTipY + 10);
+            ctx.stroke();
+            ctx.globalAlpha = 1.0;
+
+            ctx.strokeStyle = '#fef3c7';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 12]);
+            ctx.beginPath();
+            ctx.moveTo(handX + 10*dir, sweepHandY + 20);
+            ctx.lineTo(sweepTipX + 40*dir, sweepTipY + 35);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
         } else {
             // Normal windup - sword raised for attack
             const bladeLen = 80;
@@ -2354,6 +2450,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     } else if (state.state === 'ATTACK') {
         const isThrust = state.attackType === 'THRUST';
+        const isSweep = state.attackType === 'SWEEP';
 
         if (isThrust) {
             // Thrust attack - sword extended forward in a lunge
@@ -2421,6 +2518,64 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                 ctx.stroke();
             }
             ctx.globalAlpha = 1.0;
+
+        } else if (isSweep) {
+            // Sweep attack - blade carving a low horizontal arc
+            const sweepHandY = handY + 55;
+            const sweepTipX = handX + 130*dir;
+            const sweepTipY = sweepHandY + 15;
+
+            ctx.strokeStyle = '#1f2937';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(handX - 5*dir, handY);
+            ctx.lineTo(handX + 30*dir, sweepHandY);
+            ctx.stroke();
+
+            ctx.fillStyle = '#374151';
+            ctx.beginPath();
+            ctx.ellipse(handX + 32*dir, sweepHandY - 4, 6, 8, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = '#6b7280';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(handX + 35*dir, sweepHandY);
+            ctx.quadraticCurveTo(handX + 70*dir, sweepHandY + 25, sweepTipX, sweepTipY);
+            ctx.stroke();
+
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(handX + 38*dir, sweepHandY + 4);
+            ctx.quadraticCurveTo(handX + 90*dir, sweepHandY + 32, sweepTipX + 8*dir, sweepTipY + 3);
+            ctx.stroke();
+
+            ctx.fillStyle = '#f4f4f5';
+            ctx.beginPath();
+            ctx.moveTo(sweepTipX + 10*dir, sweepTipY + 2);
+            ctx.lineTo(sweepTipX - 5*dir, sweepTipY - 6);
+            ctx.lineTo(sweepTipX - 2*dir, sweepTipY + 6);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.strokeStyle = state.isPerilous ? '#dc2626' : (bossData.visualColor || '#fbbf24');
+            ctx.globalAlpha = 0.5;
+            ctx.lineWidth = 18;
+            ctx.beginPath();
+            ctx.moveTo(handX + 20*dir, sweepHandY + 10);
+            ctx.arc(handX - 40*dir, sweepHandY + 10, 140, dir === 1 ? -0.1 : Math.PI - 0.1, dir === 1 ? Math.PI - 0.7 : 0.7, dir !== 1);
+            ctx.stroke();
+            ctx.globalAlpha = 1.0;
+
+            ctx.strokeStyle = '#fef3c7';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 10]);
+            ctx.beginPath();
+            ctx.moveTo(handX - 20*dir, sweepHandY + 20);
+            ctx.lineTo(sweepTipX + 60*dir, sweepTipY + 35);
+            ctx.stroke();
+            ctx.setLineDash([]);
 
         } else {
             // Normal swing attack
@@ -2715,7 +2870,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     }
 
     if (boss.state === 'ATTACK') {
-       const props = boss.attackType === 'HEAVY' ? ATK_HEAVY : (boss.attackType === 'COMBO' ? ATK_COMBO : ATK_LIGHT);
+       const props = boss.attackType === 'HEAVY' ? ATK_HEAVY :
+                    (boss.attackType === 'COMBO' ? ATK_COMBO :
+                    (boss.attackType === 'SWEEP' ? ATK_SWEEP : ATK_LIGHT));
        const progress = 1 - (boss.attackTimer / props.active);
        ctx.save();
        ctx.globalAlpha = boss.attackType === 'HEAVY' ? 0.5 : 0.3;
@@ -2874,7 +3031,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     <canvas 
       ref={canvasRef} 
       tabIndex={0} 
-      width={800} 
+      width={ARENA_WIDTH} 
       height={500} 
       className="border-2 border-zinc-700 rounded shadow-2xl bg-black cursor-crosshair mx-auto focus:outline-none focus:ring-2 focus:ring-amber-900"
     />
