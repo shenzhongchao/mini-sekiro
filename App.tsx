@@ -326,7 +326,7 @@ const App: React.FC = () => {
   const renderMenu = () => (
     <div className="flex flex-col items-center justify-center min-h-screen bg-zinc-900 text-zinc-100 p-8">
       <h1 className="text-6xl font-bold mb-2 text-amber-600 tracking-tighter uppercase drop-shadow-lg font-serif">只狼：影之网</h1>
-      <p className="text-zinc-500 mb-8 font-mono">Sekiro Web: Shadows Die Twice</p>
+      <p className="text-zinc-500 mb-8 font-mono">Sekiro Lite: Shadow Web</p>
       
       <div className="grid grid-cols-5 gap-4 mb-8">
         {Array.from({ length: 20 }).map((_, i) => {
