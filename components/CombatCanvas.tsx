@@ -12,6 +12,7 @@ interface CombatCanvasProps {
   setLog: (msg: string) => void;
   consumeGourd: () => boolean; // Function to consume a gourd from parent state
   consumeEmblem: (amount?: number) => boolean; // Function to consume emblem
+  isPaused: boolean;
 }
 
 // Game Constants
@@ -41,10 +42,12 @@ const ATK_LIGHT = { windup: 35, active: 15, recover: 40, damageMult: 0.8, range:
 const ATK_HEAVY = { windup: 80, active: 25, recover: 140, damageMult: 1.5, range: 160 };
 const ATK_COMBO = { windup: 25, active: 12, recover: 30, damageMult: 0.7, range: 120 };
 const ATK_THRUST = { windup: 45, active: 8, recover: 60, damageMult: 1.3, range: 200 }; // Fast lunge, long range, narrow hitbox
-const FLOAT_PASSAGE_TOTAL = 54;
-const FLOAT_PASSAGE_ASCEND = 18;
-const FLOAT_PASSAGE_HOVER = 8;
-const FLOAT_PASSAGE_HIT_FRAMES = [FLOAT_PASSAGE_ASCEND + FLOAT_PASSAGE_HOVER + 2, FLOAT_PASSAGE_ASCEND + FLOAT_PASSAGE_HOVER + 6, FLOAT_PASSAGE_ASCEND + FLOAT_PASSAGE_HOVER + 10, FLOAT_PASSAGE_ASCEND + FLOAT_PASSAGE_HOVER + 14, FLOAT_PASSAGE_ASCEND + FLOAT_PASSAGE_HOVER + 22];
+const FLOAT_PASSAGE_TOTAL = 60;
+const FLOAT_PASSAGE_ASCEND = 20;
+const FLOAT_PASSAGE_HOVER = 10;
+const FLOAT_PASSAGE_DIVE = 10;
+const FLOAT_PASSAGE_GROUND_START = FLOAT_PASSAGE_ASCEND + FLOAT_PASSAGE_HOVER + FLOAT_PASSAGE_DIVE;
+const FLOAT_PASSAGE_GROUND_HIT_FRAMES = [FLOAT_PASSAGE_GROUND_START + 2, FLOAT_PASSAGE_GROUND_START + 8, FLOAT_PASSAGE_GROUND_START + 14];
 const ATK_SWEEP = { windup: 60, active: 18, recover: 90, damageMult: 1.1, range: 220 }; // Low horizontal sweep, unblockable
 
 type BossVisualTier = 'ASHINA' | 'ONSLAUGHT' | 'SHURA';
@@ -407,15 +410,21 @@ const getBossVisualProfile = (level: number, fallbackColor: string): BossVisualP
   };
 };
 
-const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, level, onCombatEnd, updateHUD, setLog, consumeGourd, consumeEmblem }) => {
+const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, level, onCombatEnd, updateHUD, setLog, consumeGourd, consumeEmblem, isPaused }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>(0);
+  const pausedRef = useRef(isPaused);
   
   const propsRef = useRef({ consumeGourd, consumeEmblem });
 
   useEffect(() => {
     propsRef.current = { consumeGourd, consumeEmblem };
   }, [consumeGourd, consumeEmblem]);
+
+  useEffect(() => {
+    pausedRef.current = isPaused;
+    gameState.current.paused = isPaused;
+  }, [isPaused]);
   
   // Game State Ref
   const gameState = useRef({
@@ -423,6 +432,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     gameOver: false,
     hitStop: 0,
     shake: 0,
+    paused: false,
     flashIntensity: 0,
     parrySuccessTimer: 0, // Timer for parry success visual effect
     inputBuffer: { parry: 0 },
@@ -450,6 +460,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       healTimer: 0,
       thrustCharge: 0, // Charge counter for thrust attack
       holdingBlock: false,
+      floatGrounded: false,
       toolCooldown: 0
     },
     boss: {
@@ -895,16 +906,17 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     // --- FLOATING PASSAGE SKILL LOGIC (S Key) ---
     if (controls.current.floatingPassage && player.toolCooldown <= 0 && player.state !== 'HIT' && player.state !== 'HEAL' && player.state !== 'THRUST_CHARGE') {
-       if (propsRef.current.consumeEmblem(3)) {
+       if (propsRef.current.consumeEmblem(2)) {
            setLog("绝技：飞渡浮舟");
            player.state = 'FLOATING_PASSAGE';
            player.attackTimer = FLOAT_PASSAGE_TOTAL; 
            player.toolCooldown = 100; 
            controls.current.floatingPassage = false;
            playCombatSound('SWING');
-       } else {
+           player.floatGrounded = false;
+        } else {
            if (player.toolCooldown <= 0) {
-             setLog("纸人不足！(需要3个)");
+             setLog("纸人不足！(需要2个)");
              controls.current.floatingPassage = false;
            }
        }
@@ -916,24 +928,37 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
        const dir = player.facingRight ? 1 : -1;
        const ascending = t < FLOAT_PASSAGE_ASCEND;
        const hovering = t >= FLOAT_PASSAGE_ASCEND && t < FLOAT_PASSAGE_ASCEND + FLOAT_PASSAGE_HOVER;
+       const groundPhase = t >= FLOAT_PASSAGE_GROUND_START;
 
        if (ascending) {
           const ascentRatio = t / FLOAT_PASSAGE_ASCEND;
-          player.vx = dir * (1 + ascentRatio);
-          player.vy = -7 + ascentRatio * 1.5;
+          player.vx = dir * (1 + ascentRatio * 0.8);
+          player.vy = -13 + ascentRatio * 3.5;
+          player.floatGrounded = false;
        } else if (hovering) {
           player.vx = dir * 2;
           player.vy = Math.sin(t * 0.3) * 0.8;
+          player.floatGrounded = false;
+       } else if (!groundPhase) {
+          const diveRatio = (t - FLOAT_PASSAGE_ASCEND - FLOAT_PASSAGE_HOVER) / FLOAT_PASSAGE_DIVE;
+          player.vx = dir * (4 + diveRatio * 2.5);
+          player.vy = 11 + diveRatio * 6;
+          player.floatGrounded = false;
        } else {
-          const diveRatio = (t - FLOAT_PASSAGE_ASCEND - FLOAT_PASSAGE_HOVER) / (FLOAT_PASSAGE_TOTAL - FLOAT_PASSAGE_ASCEND - FLOAT_PASSAGE_HOVER);
-          player.vx = dir * (3.5 + diveRatio * 1.8);
-          player.vy = 9 + diveRatio * 5;
+          const groundProgress = Math.min(1, (t - FLOAT_PASSAGE_GROUND_START) / (FLOAT_PASSAGE_TOTAL - FLOAT_PASSAGE_GROUND_START));
+          if (!player.floatGrounded) {
+             player.floatGrounded = true;
+             handleLandingImpact(player.x, GROUND_Y, player.width, Math.abs(player.vy), '#f97316');
+          }
+          player.y = GROUND_Y;
+          player.vy = 0;
+          player.vx = dir * (6 + groundProgress * 4);
        }
 
        if (ascending && t % 4 === 0) {
           spawnDashTrail(player);
        }
-       if (!ascending && !hovering) {
+       if (!ascending && !hovering && !groundPhase) {
           spawnSparks(player.x + player.width / 2, player.y - 10, 6, '#fef3c7');
           gameState.current.shockwaves.push({
             x: player.x + player.width / 2,
@@ -941,23 +966,29 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             radius: 26,
             alpha: 0.3
           });
+          player.floatGrounded = false;
+       }
+       if (groundPhase && t % 3 === 0) {
+          spawnDashTrail(player);
        }
 
-       const isHitFrame = FLOAT_PASSAGE_HIT_FRAMES.includes(t);
+       const isHitFrame = groundPhase && FLOAT_PASSAGE_GROUND_HIT_FRAMES.includes(t);
        
        if (isHitFrame) {
            playCombatSound('FLURRY');
            const attackBox = {
-               x: player.x + (player.facingRight ? 0 : -90),
-               y: player.y - 10,
-               width: 110,
-               height: 70
+               x: player.x + (player.facingRight ? 0 : -100),
+               y: player.y - 5,
+               width: 125,
+               height: 80
            };
-           spawnSparks(attackBox.x + 55, attackBox.y + 35, 18, '#fef3c7'); 
+           spawnSparks(attackBox.x + 60, attackBox.y + 40, 24, '#fef3c7'); 
+           triggerShake(10);
+           triggerHitStop(4);
 
            if (checkCollision(attackBox, boss)) {
-               let dmg = playerStats.attackPower * 0.4; 
-               let postureDmg = 2.5 + (playerStats.attackPower * 0.07);
+               let dmg = playerStats.attackPower * 0.65; 
+               let postureDmg = 3.5 + (playerStats.attackPower * 0.12);
                
                if (boss.state === 'BLOCK') {
                    playCombatSound('BLOCK');
@@ -974,10 +1005,10 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                    boss.postureRecoveryTimer = 60;
 
                    // Track combo only on last hit of Floating Passage (t === 50)
-                   if (t === 50) {
-                     const COMBO_WINDOW = 90;
-                     if (state.frame - boss.lastHitTime < COMBO_WINDOW) {
-                       boss.comboCounter++;
+               if (t === FLOAT_PASSAGE_GROUND_HIT_FRAMES[FLOAT_PASSAGE_GROUND_HIT_FRAMES.length - 1]) {
+                    const COMBO_WINDOW = 90;
+                    if (state.frame - boss.lastHitTime < COMBO_WINDOW) {
+                      boss.comboCounter++;
                      } else {
                        boss.comboCounter = 1;
                      }
@@ -1073,6 +1104,11 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     if (p.life <= 0 || p.x < 0 || p.x > ARENA_WIDTH || p.y > GROUND_Y + 100) {
             state.projectiles.splice(i, 1);
         }
+
+       if (player.attackTimer <= 0) {
+          player.state = 'IDLE';
+          player.floatGrounded = false;
+       }
     }
 
     // --- PLAYER POSTURE RECOVERY ---
@@ -1611,7 +1647,14 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                 dmg *= 1.2 + (chargeRatio * 1.0); // Up to 2.2x damage
             }
 
-            boss.hp -= dmg;
+               boss.hp -= dmg;
+               state.flashIntensity = Math.min(1, state.flashIntensity + 0.15);
+               state.shockwaves.push({
+                 x: boss.x + boss.width / 2,
+                 y: boss.y + 30,
+                 radius: 20,
+                 alpha: 0.45
+               });
             boss.posture += 3 + (playerStats.attackPower * 0.1);
             boss.vx += player.facingRight ? 2 : -2;
 
@@ -1683,7 +1726,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     const dir = state.facingRight ? 1 : -1;
     const floatPhase = isFloat ? (FLOAT_PASSAGE_TOTAL - state.attackTimer) : 0;
     const isFloatAscend = isFloat && floatPhase < FLOAT_PASSAGE_ASCEND;
-    const isFloatDive = isFloat && !isFloatAscend;
+    const isFloatGround = isFloat && floatPhase >= FLOAT_PASSAGE_GROUND_START;
+    const isFloatDive = isFloat && !isFloatAscend && !isFloatGround;
 
     // Attack animation phases (18 frames total)
     const attackProgress = isAttack ? (18 - state.attackTimer) / 18 : 0;
@@ -1717,11 +1761,14 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     if (isFloat) {
         if (isFloatAscend) {
-            ctx.translate(0, -10 + Math.sin(frame * 0.25) * 2);
+            ctx.translate(0, -12 + Math.sin(frame * 0.25) * 2);
             ctx.rotate(dir * 0.04);
-        } else {
-            ctx.translate(0, -12);
-            ctx.rotate(dir * 0.15);
+        } else if (isFloatDive) {
+            ctx.translate(0, -14);
+            ctx.rotate(dir * 0.18);
+        } else { // ground dash
+            ctx.translate(0, -8);
+            ctx.rotate(dir * 0.08);
         }
     } else if (isThrust) {
         // Rotate whole body for thrust lunge
@@ -1758,7 +1805,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             ctx.lineTo(14 * dir, -8);
             ctx.lineTo(8 * dir, 4);
             ctx.lineTo(-2, -32 - wave);
-        } else {
+        } else if (isFloatDive) {
             ctx.moveTo(-8, -20);
             ctx.lineTo(-5 * dir, 10);
             ctx.lineTo(5 * dir, 15);
@@ -1768,6 +1815,16 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             ctx.lineTo(24 * dir, -5);
             ctx.lineTo(20 * dir, 10);
             ctx.lineTo(0, -15);
+        } else {
+            ctx.moveTo(-10, -15);
+            ctx.lineTo(-25 * dir, 0);
+            ctx.lineTo(-15 * dir, 12);
+            ctx.lineTo(0, -12);
+
+            ctx.moveTo(5, -15);
+            ctx.lineTo(20 * dir, 5);
+            ctx.lineTo(28 * dir, 12);
+            ctx.lineTo(12, -10);
         }
     } else if (isBlock) {
         // Defensive stance - one foot forward, lowered center of gravity
@@ -3084,6 +3141,19 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.fillRect(-100, -100, ctx.canvas.width + 200, ctx.canvas.height + 200);
     }
 
+    if (gameState.current.paused) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+        ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        ctx.fillStyle = '#fef3c7';
+        ctx.font = 'bold 42px serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('暂停', ctx.canvas.width / 2, ctx.canvas.height / 2);
+        ctx.font = '16px sans-serif';
+        ctx.fillText('按 P 键或点击继续', ctx.canvas.width / 2, ctx.canvas.height / 2 + 30);
+        ctx.restore();
+    }
+
     ctx.restore();
   };
 
@@ -3096,7 +3166,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     canvas.focus();
 
     const render = () => {
-      update();
+      if (!pausedRef.current) {
+        update();
+      }
       draw(ctx);
       requestRef.current = requestAnimationFrame(render);
     };

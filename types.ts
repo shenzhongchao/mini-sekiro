@@ -55,6 +55,7 @@ export interface PlayerStats {
   attackPower: number;
   equipment: Item[];
   beadFragments: number;
+  beadFragmentQueue: ItemStats[];
   battleMemories: Item[];
   talismans: Item[];
   engravings: Item[];

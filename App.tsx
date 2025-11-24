@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { GameState, BossData, PlayerStats, Item, Rarity, ItemCategory, ItemStats } from './types';
 import { generateBossForLevel, generateLoot } from './services/geminiService';
 import CombatCanvas from './components/CombatCanvas';
@@ -86,12 +86,25 @@ const integrateLoot = (player: PlayerStats, loot: Item): PlayerStats => {
   switch (loot.category) {
     case ItemCategory.BEAD_FRAGMENT: {
       const qty = loot.quantity || 1;
-      let totalFragments = next.beadFragments + qty;
-      while (totalFragments >= BEAD_FRAGMENT_THRESHOLD) {
-        totalFragments -= BEAD_FRAGMENT_THRESHOLD;
-        next = applyStatDelta(next, { vitality: BEAD_HP_BONUS, posture: BEAD_POSTURE_BONUS }, 1);
+      const queue = [...next.beadFragmentQueue];
+      const fragmentStats = {
+        vitality: loot.stats?.vitality ?? BEAD_HP_BONUS,
+        posture: loot.stats?.posture ?? BEAD_POSTURE_BONUS
+      };
+
+      for (let i = 0; i < qty; i++) {
+        queue.push({ ...fragmentStats });
       }
-      next.beadFragments = totalFragments;
+
+      while (queue.length >= BEAD_FRAGMENT_THRESHOLD) {
+        const consumed = queue.splice(0, BEAD_FRAGMENT_THRESHOLD);
+        const totalVitality = consumed.reduce((sum, frag) => sum + (frag.vitality ?? BEAD_HP_BONUS), 0);
+        const totalPosture = consumed.reduce((sum, frag) => sum + (frag.posture ?? BEAD_POSTURE_BONUS), 0);
+        next = applyStatDelta(next, { vitality: totalVitality, posture: totalPosture }, 1);
+      }
+
+      next.beadFragmentQueue = queue;
+      next.beadFragments = queue.length;
       break;
     }
     case ItemCategory.BATTLE_MEMORY: {
@@ -158,6 +171,7 @@ const App: React.FC = () => {
     attackPower: 10, // Slightly lowered base attack to make loot more meaningful
     equipment: [],
     beadFragments: 0,
+    beadFragmentQueue: [],
     battleMemories: [],
     talismans: [],
     engravings: [],
@@ -173,6 +187,7 @@ const App: React.FC = () => {
   const [currentBoss, setCurrentBoss] = useState<BossData | null>(null);
   const [loadingMessage, setLoadingMessage] = useState("正在磨刀...");
   const [combatLog, setCombatLog] = useState("");
+  const [isPaused, setIsPaused] = useState(false);
   
   // Combat UI State (synced from canvas)
   const [hudState, setHudState] = useState({
@@ -194,6 +209,7 @@ const App: React.FC = () => {
 
   const startLevel = async (level: number) => {
     initAudio(); // Initialize audio context on user gesture
+    setIsPaused(false);
     setGameState(GameState.LOADING_BOSS);
     setDroppedItem(null); // Reset dropped item so victory screen shows loading state
     setSelectedLevel(level);
@@ -267,6 +283,43 @@ const App: React.FC = () => {
   const setLog = (msg: string) => {
     setCombatLog(msg);
   };
+
+  const togglePause = useCallback(() => {
+    if (gameState !== GameState.COMBAT) return;
+    setIsPaused(prev => {
+      const next = !prev;
+      setCombatLog(next ? '【暂停】战斗暂时停滞' : '战斗继续！');
+      return next;
+    });
+  }, [gameState]);
+
+  const handleResetLevel = () => {
+    if (gameState !== GameState.COMBAT) return;
+    const confirmed = window.confirm('慎重提醒：重置会丢失当前战斗进度，确定吗？');
+    if (!confirmed) return;
+    setIsPaused(false);
+    setCombatLog('正在重置关卡...');
+    startLevel(selectedLevel);
+  };
+
+  useEffect(() => {
+    const handlePauseKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'p') {
+        if (gameState === GameState.COMBAT) {
+          e.preventDefault();
+          togglePause();
+        }
+      }
+    };
+    window.addEventListener('keydown', handlePauseKey);
+    return () => window.removeEventListener('keydown', handlePauseKey);
+  }, [togglePause, gameState]);
+
+  useEffect(() => {
+    if (gameState !== GameState.COMBAT && isPaused) {
+      setIsPaused(false);
+    }
+  }, [gameState, isPaused]);
 
   // --- Renderers ---
 
@@ -462,6 +515,7 @@ const App: React.FC = () => {
             setLog={setLog}
             consumeGourd={consumeGourd}
             consumeEmblem={consumeEmblem}
+            isPaused={isPaused}
           />
           <UIOverlay 
             bossName={currentBoss.name}
@@ -470,6 +524,9 @@ const App: React.FC = () => {
             combatLog={combatLog}
             gourds={playerStats.gourds}
             spiritEmblems={playerStats.spiritEmblems}
+            isPaused={isPaused}
+            onTogglePause={togglePause}
+            onResetLevel={handleResetLevel}
           />
         </>
       )}
