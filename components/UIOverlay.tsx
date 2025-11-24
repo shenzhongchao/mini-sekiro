@@ -43,7 +43,7 @@ const UIOverlay: React.FC<UIOverlayProps> = ({
         >
           重置关卡
         </button>
-        <span className="text-[11px] text-red-200 text-center">慎重：重置会丢失当前进度</span>
+        <span className="text-[11px] text-red-200 text-center">慎重：重置将清空所有积累</span>
       </div>
 
       <div className="absolute top-0 left-0 w-full h-full pointer-events-none p-4 flex flex-col justify-between">

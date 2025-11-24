@@ -10,6 +10,67 @@ import { initAudio } from './utils/audio';
 const BEAD_FRAGMENT_THRESHOLD = 3;
 const BEAD_HP_BONUS = 35;
 const BEAD_POSTURE_BONUS = 15;
+const PLAYER_STATS_STORAGE_KEY = 'sekiro-lite-player-stats';
+
+const createDefaultPlayerStats = (): PlayerStats => ({
+  hp: 200,
+  maxHp: 200,
+  posture: 0,
+  maxPosture: 100,
+  attackPower: 10,
+  equipment: [],
+  beadFragments: 0,
+  beadFragmentQueue: [],
+  battleMemories: [],
+  talismans: [],
+  engravings: [],
+  postureRecoveryBonus: 0,
+  maxGourds: 3,
+  maxSpiritEmblems: 15,
+  gold: 0,
+  currentLevel: 1,
+  gourds: 3,
+  spiritEmblems: 15
+});
+
+const sanitizeStatsForSave = (stats: PlayerStats): PlayerStats => ({
+  ...stats,
+  hp: stats.maxHp,
+  posture: 0,
+  gourds: stats.maxGourds,
+  spiritEmblems: stats.maxSpiritEmblems,
+  beadFragments: stats.beadFragmentQueue.length
+});
+
+const hydratePlayerStats = (): PlayerStats => {
+  const base = createDefaultPlayerStats();
+  if (typeof window === 'undefined') return base;
+  try {
+    const stored = window.localStorage.getItem(PLAYER_STATS_STORAGE_KEY);
+    if (!stored) return base;
+    const parsed = JSON.parse(stored);
+    let beadQueue: ItemStats[];
+    if (Array.isArray(parsed.beadFragmentQueue)) {
+      beadQueue = parsed.beadFragmentQueue;
+    } else {
+      const fallbackCount = typeof parsed.beadFragments === 'number' ? parsed.beadFragments : base.beadFragments;
+      beadQueue = Array.from({ length: fallbackCount }, () => ({ vitality: BEAD_HP_BONUS, posture: BEAD_POSTURE_BONUS }));
+    }
+    return {
+      ...base,
+      ...parsed,
+      equipment: parsed.equipment || base.equipment,
+      battleMemories: parsed.battleMemories || base.battleMemories,
+      talismans: parsed.talismans || base.talismans,
+      engravings: parsed.engravings || base.engravings,
+      beadFragmentQueue: beadQueue,
+      beadFragments: beadQueue.length
+    } as PlayerStats;
+  } catch (err) {
+    console.warn('Failed to load saved player stats', err);
+    return base;
+  }
+};
 
 const clamp = (value: number, minValue: number) => Math.max(value, minValue);
 
@@ -163,26 +224,7 @@ const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
   const [selectedLevel, setSelectedLevel] = useState<number>(1);
   
-  const [playerStats, setPlayerStats] = useState<PlayerStats>({
-    hp: 200, 
-    maxHp: 200,
-    posture: 0,
-    maxPosture: 100, // Adjusted base posture for tighter gameplay
-    attackPower: 10, // Slightly lowered base attack to make loot more meaningful
-    equipment: [],
-    beadFragments: 0,
-    beadFragmentQueue: [],
-    battleMemories: [],
-    talismans: [],
-    engravings: [],
-    postureRecoveryBonus: 0,
-    maxGourds: 3,
-    maxSpiritEmblems: 15,
-    gold: 0,
-    currentLevel: 1,
-    gourds: 3, 
-    spiritEmblems: 15 
-  });
+  const [playerStats, setPlayerStats] = useState<PlayerStats>(() => hydratePlayerStats());
 
   const [currentBoss, setCurrentBoss] = useState<BossData | null>(null);
   const [loadingMessage, setLoadingMessage] = useState("正在磨刀...");
@@ -196,6 +238,12 @@ const App: React.FC = () => {
   });
 
   const [droppedItem, setDroppedItem] = useState<Item | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const payload = sanitizeStatsForSave(playerStats);
+    window.localStorage.setItem(PLAYER_STATS_STORAGE_KEY, JSON.stringify(payload));
+  }, [playerStats]);
 
   // --- Actions ---
 
@@ -294,12 +342,29 @@ const App: React.FC = () => {
   }, [gameState]);
 
   const handleResetLevel = () => {
-    if (gameState !== GameState.COMBAT) return;
-    const confirmed = window.confirm('慎重提醒：重置会丢失当前战斗进度，确定吗？');
+    const confirmed = window.confirm('慎重提醒：重置会清空所有养成进度并返回鬼佛，确定吗？');
     if (!confirmed) return;
     setIsPaused(false);
-    setCombatLog('正在重置关卡...');
-    startLevel(selectedLevel);
+    const resetStats = createDefaultPlayerStats();
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(PLAYER_STATS_STORAGE_KEY);
+    }
+    setPlayerStats(resetStats);
+    setCombatLog('积累已清空，回到鬼佛。');
+    setCurrentBoss(null);
+    setDroppedItem(null);
+    setHudState({
+      pHp: resetStats.maxHp,
+      pMaxHp: resetStats.maxHp,
+      pPost: 0,
+      pMaxPost: resetStats.maxPosture,
+      bHp: 0,
+      bMaxHp: 0,
+      bPost: 0,
+      bMaxPost: 0
+    });
+    setSelectedLevel(1);
+    setGameState(GameState.MENU);
   };
 
   useEffect(() => {
