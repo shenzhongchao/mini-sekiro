@@ -2,6 +2,7 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import { BossData, PlayerStats } from '../types';
 import { playCombatSound } from '../utils/audio';
+import { advanceCombatClock, advanceParryFrame, PARRY_INPUT_BUFFER_FRAMES } from '../utils/combatClock';
 
 interface CombatCanvasProps {
   bossData: BossData;
@@ -16,12 +17,10 @@ interface CombatCanvasProps {
 }
 
 // Game Constants
-const FPS = 60;
 const GRAVITY_ASCEND = 0.45;
 const GRAVITY_DESCEND = 0.9;
 const GROUND_Y = 350;
 const ARENA_WIDTH = 1000;
-const PARRY_WINDOW = 26; 
 const HEAL_DURATION = 45; 
 
 // Movement Constants
@@ -690,16 +689,25 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     if (state.gameOver) return;
 
-    if (state.inputBuffer.parry > 0) {
-        state.player.parryTimer = PARRY_WINDOW;
-        state.inputBuffer.parry--;
-    }
+    const canStartParry = !['HIT', 'HEAL', 'ATTACK', 'FLOATING_PASSAGE', 'THRUST_CHARGE', 'THRUST_RELEASE'].includes(state.player.state);
+    const parryTiming = advanceParryFrame(state.inputBuffer.parry, state.player.parryTimer, canStartParry);
+    state.inputBuffer.parry = parryTiming.bufferedFrames;
+    state.player.parryTimer = parryTiming.activeFrames;
 
     const { player, boss } = state;
     state.frame++;
     if (state.shake > 0) state.shake *= 0.9;
     if (state.flashIntensity > 0) state.flashIntensity -= 0.1;
     if (state.parrySuccessTimer > 0) state.parrySuccessTimer--;
+
+    // Update combat particles in simulation time, not per browser paint.
+    for (let i = state.particles.length - 1; i >= 0; i--) {
+      const particle = state.particles[i];
+      particle.x += particle.vx;
+      particle.y += particle.vy;
+      particle.life--;
+      if (particle.life <= 0) state.particles.splice(i, 1);
+    }
 
     // Auto-reset combo counter if boss hasn't been hit recently
     const COMBO_RESET_WINDOW = 120; // 2 seconds
@@ -848,7 +856,6 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     if (player.x > ARENA_WIDTH - player.width) { player.x = ARENA_WIDTH - player.width; player.vx = 0; }
 
     if (player.attackTimer > 0) player.attackTimer--;
-    if (player.parryTimer > 0) player.parryTimer--;
     if (player.toolCooldown > 0) player.toolCooldown--;
     
     // --- HEALING LOGIC ---
@@ -1072,7 +1079,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
             if (dodged) {
                 setLog("闪避手里剑！");
                 spawnDashTrail(player);
-            } else if (player.parryTimer > 0) {
+            } else if (player.parryTimer > 0 && isPlayerFacingBoss()) {
                 // Perfect parry deflects shuriken
                 setLog("弹反手里剑！");
                 playCombatSound('PARRY');
@@ -1421,7 +1428,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                   player.state = 'HIT';
                   player.thrustCharge = 0;
                 }
-             } else if (player.parryTimer > 0 && !isSweep) {
+             } else if (player.parryTimer > 0 && !isSweep && isPlayerFacingBoss()) {
                setLog("完美弹反！");
                playCombatSound('PARRY');
                spawnSparks((player.x + boss.x)/2, player.y + 30, 50, '#fcd34d');
@@ -1705,10 +1712,11 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.strokeStyle = '#475569';
     ctx.lineWidth = 1;
     for (let i = 0; i < width; i += 15) {
-        const h = 20 + Math.random() * 30;
+        const h = 20 + ((i * 17) % 31);
+        const sway = ((i * 13) % 11) - 5;
         ctx.beginPath();
         ctx.moveTo(i, GROUND_Y + 60);
-        ctx.quadraticCurveTo(i + 5, GROUND_Y + 60 - h/2, i + (Math.random()-0.5)*10, GROUND_Y + 60 - h);
+        ctx.quadraticCurveTo(i + 5, GROUND_Y + 60 - h/2, i + sway, GROUND_Y + 60 - h);
         ctx.stroke();
     }
   };
@@ -3117,13 +3125,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
        ctx.fillText('危', boss.x + boss.width/2, boss.y - 50);
     }
 
-    particles.forEach((p, i) => {
-      p.x += p.vx;
-      p.y += p.vy;
-      p.life--;
+    particles.forEach(p => {
       ctx.fillStyle = p.color;
       ctx.fillRect(p.x, p.y, 3, 3);
-      if (p.life <= 0) particles.splice(i, 1);
     });
     
     gameState.current.shockwaves.forEach(sw => {
@@ -3165,10 +3169,21 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     canvas.focus();
 
-    const render = () => {
-      if (!pausedRef.current) {
-        update();
+    let previousTime: number | null = null;
+    let accumulatorMs = 0;
+    const render = (now: number) => {
+      const elapsedMs = previousTime === null ? 0 : now - previousTime;
+      previousTime = now;
+
+      if (pausedRef.current) {
+        // Never run a backlog of combat ticks when resuming from pause.
+        accumulatorMs = 0;
+      } else {
+        const clock = advanceCombatClock(accumulatorMs, elapsedMs);
+        accumulatorMs = clock.accumulatorMs;
+        for (let i = 0; i < clock.steps; i++) update();
       }
+
       draw(ctx);
       requestRef.current = requestAnimationFrame(render);
     };
@@ -3229,6 +3244,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       if (e.key.toLowerCase() === 'e') controls.current.thrust = false; // Thrust Release
     };
     const handleMouseDown = (e: MouseEvent) => {
+      // UI clicks should never accidentally trigger an attack or block.
+      if (e.target !== canvasRef.current) return;
       if (e.button === 0) { 
         if (gameState.current.player.state === 'IDLE' || gameState.current.player.state === 'RUN') {
           gameState.current.player.state = 'ATTACK';
@@ -3236,7 +3253,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         }
       } else if (e.button === 2) { 
         controls.current.block = true;
-        gameState.current.inputBuffer.parry = 6; 
+        gameState.current.inputBuffer.parry = PARRY_INPUT_BUFFER_FRAMES; 
       }
     };
     const handleMouseUp = (e: MouseEvent) => {
@@ -3245,18 +3262,36 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       }
     };
 
+    const handleContextMenu = (e: MouseEvent) => {
+      if (e.target === canvasRef.current) e.preventDefault();
+    };
+    const handleBlur = () => {
+      // Released keys are not delivered after losing browser focus.
+      controls.current.left = false;
+      controls.current.right = false;
+      controls.current.block = false;
+      controls.current.jump = false;
+      controls.current.heal = false;
+      controls.current.shuriken = false;
+      controls.current.floatingPassage = false;
+      controls.current.thrust = false;
+      gameState.current.inputBuffer.parry = 0;
+    };
+
+    window.addEventListener('blur', handleBlur);
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mouseup', handleMouseUp);
-    window.addEventListener('contextmenu', (e) => e.preventDefault());
+    window.addEventListener('contextmenu', handleContextMenu);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mouseup', handleMouseUp);
-      window.removeEventListener('contextmenu', (e) => e.preventDefault());
+      window.removeEventListener('contextmenu', handleContextMenu);
+      window.removeEventListener('blur', handleBlur);
     };
   }, []);
 
