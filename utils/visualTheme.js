@@ -45,6 +45,7 @@ export function getImpactProgress(impact) {
 
 export function shakeOffset(frame, intensity) {
   const magnitude = Math.min(13, Math.max(0, intensity)) * 0.43;
+  if (magnitude === 0) return { x: 0, y: 0 };
   return {
     x: Math.sin(frame * 13.72) * magnitude,
     y: Math.cos(frame * 9.61) * magnitude * 0.65
