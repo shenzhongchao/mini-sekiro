@@ -60,12 +60,12 @@ The game uses a centralized state machine (`GameState` enum) managed in `App.tsx
 
 **CombatCanvas.tsx**
 - Self-contained combat simulation on HTML5 canvas
-- Runs at 60 FPS with requestAnimationFrame loop
+- Runs on a fixed 60 Hz simulation clock, with requestAnimationFrame used only to schedule rendering
 - Implements:
   - Player controls (WASD movement, mouse for attack/block, Q/E/S for skills)
   - Double-tap dash mechanic (A/D keys)
   - Boss AI state machine (IDLE, WINDUP, ATTACK, BLOCK, DODGE, RECOVER, PACE, HIT)
-  - Parry window system (26 frames)
+  - Parry window system (10 active frames, 6-frame input buffer)
   - Posture break mechanics
   - Rigid body collision physics with elastic response
   - VFX (particles, shockwaves, screen shake, hit stop)
@@ -120,6 +120,10 @@ Uses Tailwind CSS via CDN (imported in index.html). Key design:
 - Red (#ef4444) for danger states
 - Monospace and serif fonts for thematic styling
 - Chinese text for authenticity (e.g., "只狼：影之网", "死", "危")
+
+## Automated Tests
+
+Run `npm test` to verify combat simulation timing and parry input buffering via Node.js built-in test runner.
 
 ## Important Implementation Notes
 
