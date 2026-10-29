@@ -1682,27 +1682,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
   // --- RENDER FUNCTIONS ---
   const drawBackground = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
-    ctx.fillStyle = '#e4e4e7';
-    ctx.shadowBlur = 20;
-    ctx.shadowColor = '#fff';
-    ctx.beginPath();
-    ctx.arc(width - 100, 100, 50, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-
-    ctx.fillStyle = '#27272a';
-    ctx.fillRect(0, GROUND_Y + 60, width, 200);
-    
-    ctx.strokeStyle = '#475569';
-    ctx.lineWidth = 1;
-    for (let i = 0; i < width; i += 15) {
-        const h = 20 + ((i * 17) % 31);
-        const sway = ((i * 13) % 11) - 5;
-        ctx.beginPath();
-        ctx.moveTo(i, GROUND_Y + 60);
-        ctx.quadraticCurveTo(i + 5, GROUND_Y + 60 - h/2, i + sway, GROUND_Y + 60 - h);
-        ctx.stroke();
-    }
+    const { player, boss, frame } = gameState.current;
+    const focusX = (player.x + player.width / 2 + boss.x + boss.width / 2) / 2;
+    drawBattlefield(ctx, width, height, frame, focusX, visualTheme);
   };
 
   const drawWolf = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, state: any, frame: number) => {
@@ -2950,13 +2932,20 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     const { player, boss, particles, projectiles, shake, frame, sakura } = gameState.current;
 
     ctx.save();
-    const dx = (Math.random() - 0.5) * shake;
-    const dy = (Math.random() - 0.5) * shake;
-    ctx.translate(dx, dy);
+    const offset = shakeOffset(frame, shake);
+    ctx.translate(offset.x, offset.y);
+    const phaseZoom = 1 + 0.018 * Math.sin(Math.PI * Math.min(1, boss.phaseNoticeTimer / 115));
+    if (phaseZoom > 1) {
+      ctx.translate(ctx.canvas.width / 2, ctx.canvas.height / 2);
+      ctx.scale(phaseZoom, phaseZoom);
+      ctx.translate(-ctx.canvas.width / 2, -ctx.canvas.height / 2);
+    }
 
     ctx.fillStyle = '#18181b';
     ctx.fillRect(-10, -10, ctx.canvas.width + 20, ctx.canvas.height + 20);
     drawBackground(ctx, ctx.canvas.width, ctx.canvas.height);
+    drawGroundContact(ctx, player.x + player.width / 2, player.y + player.height, player.width * 1.9, player.y < GROUND_Y - 3, '#e2e8f0');
+    drawGroundContact(ctx, boss.x + boss.width / 2, boss.y + boss.height, boss.width * 1.6, boss.y < GROUND_Y - 3, visualTheme.primary);
 
     sakura.forEach(s => {
         ctx.save();
@@ -2997,7 +2986,16 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.restore();
     }
 
+    ctx.save();
+    ctx.shadowColor = '#dbeafe';
+    ctx.shadowBlur = player.state === 'HIT' ? 3 : 7;
     drawWolf(ctx, player.x, player.y, player.width, player.height, player, frame);
+    ctx.restore();
+    if (player.state === 'ATTACK' || player.state === 'THRUST_RELEASE') {
+      const isThrust = player.state === 'THRUST_RELEASE';
+      const progress = isThrust ? 1 - player.attackTimer / 30 : 1 - player.attackTimer / 18;
+      drawBladeTrail(ctx, player.x + player.width / 2, player.y + player.height * 0.45, player.facingRight ? 1 : -1, isThrust ? 'THRUST' : 'LIGHT', progress, '#f8fafc');
+    }
 
     // Show golden aura only on successful parry
     if (gameState.current.parrySuccessTimer > 0) {
@@ -3071,7 +3069,11 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.restore();
     }
 
+    ctx.save();
+    ctx.shadowColor = visualTheme.primary;
+    ctx.shadowBlur = boss.state === 'WINDUP' ? 15 : 6;
     drawBossFigure(ctx, boss.x, boss.y, boss.width, boss.height, boss, bossColor, frame, bossVisualProfile);
+    ctx.restore();
     
     if (boss.state === 'RECOVER') {
         ctx.fillStyle = '#fff';
@@ -3080,26 +3082,15 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     }
 
     if (boss.state === 'ATTACK') {
-       const props = boss.attackType === 'HEAVY' ? ATK_HEAVY :
-                    (boss.attackType === 'COMBO' ? ATK_COMBO :
-                    (boss.attackType === 'SWEEP' ? ATK_SWEEP : ATK_LIGHT));
-       const progress = 1 - (boss.attackTimer / props.active);
-       ctx.save();
-       ctx.globalAlpha = boss.attackType === 'HEAVY' ? 0.5 : 0.3;
-       ctx.fillStyle = boss.isPerilous ? '#b91c1c' : (boss.attackType === 'HEAVY' ? '#ef4444' : '#f59e0b'); 
-       const centerX = boss.x + boss.width / 2;
-       const centerY = boss.y + boss.height / 2;
-       const radius = props.range; 
-       const direction = boss.faceRight ? 1 : -1;
-       ctx.beginPath();
-       ctx.moveTo(centerX, centerY);
-       const startAngle = direction === 1 ? -Math.PI/2 : -Math.PI/2;
-       const endAngle = direction === 1 ? Math.PI/2 : -3 * Math.PI/2;
-       const currentEndAngle = startAngle + (endAngle - startAngle) * progress;
-       ctx.arc(centerX, centerY, radius, startAngle, currentEndAngle, direction === -1);
-       ctx.lineTo(centerX, centerY);
-       ctx.fill();
-       ctx.restore();
+      const props = boss.attackType === 'THRUST' ? ATK_THRUST :
+                    boss.attackType === 'HEAVY' ? ATK_HEAVY :
+                    boss.attackType === 'SWEEP' ? ATK_SWEEP :
+                    boss.attackType === 'COMBO' ? ATK_COMBO : ATK_LIGHT;
+      const progress = 1 - boss.attackTimer / props.active;
+      drawBladeTrail(ctx, boss.x + boss.width / 2,
+        boss.y + (boss.attackType === 'SWEEP' ? boss.height * 0.73 : boss.height * 0.47),
+        boss.faceRight ? 1 : -1, boss.attackType,
+        progress, boss.isPerilous ? '#fb7185' : visualTheme.trail);
     }
 
     if ((boss.state === 'WINDUP' || boss.volleyNoticeTimer > 0) && boss.telegraphLabel) {
@@ -3139,6 +3130,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       ctx.fillRect(p.x, p.y, 3, 3);
     });
     
+    drawImpactCues(ctx, gameState.current.impacts);
+
     gameState.current.shockwaves.forEach(sw => {
        ctx.save();
        ctx.strokeStyle = `rgba(255, 215, 0, ${sw.alpha})`; 
@@ -3149,10 +3142,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
        ctx.restore();
     });
 
-    if (gameState.current.flashIntensity > 0) {
-        ctx.fillStyle = `rgba(255, 255, 255, ${gameState.current.flashIntensity})`;
-        ctx.fillRect(-100, -100, ctx.canvas.width + 200, ctx.canvas.height + 200);
-    }
+    drawScreenGrade(ctx, ctx.canvas.width, ctx.canvas.height,
+      boss.phaseNoticeTimer / 115, gameState.current.flashIntensity);
 
     if (gameState.current.paused) {
         ctx.save();
