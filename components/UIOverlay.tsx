@@ -1,5 +1,5 @@
-
 import React from 'react';
+import { clamp01 } from '../utils/visualTheme';
 
 interface UIOverlayProps {
   bossName: string;
@@ -13,122 +13,114 @@ interface UIOverlayProps {
   playerPosture: number;
   playerMaxPosture: number;
   combatLog: string;
-  gourds: number; // Healing items count
-  spiritEmblems: number; // Shuriken ammo
+  gourds: number;
+  spiritEmblems: number;
   isPaused: boolean;
   onTogglePause: () => void;
   onResetLevel: () => void;
 }
+
+const getPercent = (value: number, max: number) =>
+  Math.round(clamp01(max > 0 ? value / max : 0) * 100);
 
 const UIOverlay: React.FC<UIOverlayProps> = ({
   bossName, bossTitle, bossHp, bossMaxHp, bossPosture, bossMaxPosture,
   playerHp, playerMaxHp, playerPosture, playerMaxPosture, combatLog, gourds, spiritEmblems,
   isPaused, onTogglePause, onResetLevel
 }) => {
+  const bossHealth = getPercent(bossHp, bossMaxHp);
+  const bossStance = getPercent(bossPosture, bossMaxPosture);
+  const playerHealth = getPercent(playerHp, playerMaxHp);
+  const playerStance = getPercent(playerPosture, playerMaxPosture);
+  const isPerilousMessage = combatLog.includes('危');
+  const isParryMessage = combatLog.includes('弹反');
+  const isDeathblowMessage = combatLog.includes('忍杀');
+
   return (
-    <>
-      <div className="absolute top-4 right-4 flex flex-col gap-2 pointer-events-auto z-20">
-        <button
-          onClick={onTogglePause}
-          className={`px-4 py-1 rounded border text-sm font-semibold transition-colors ${
-            isPaused
-              ? 'bg-emerald-700/80 border-emerald-400 text-emerald-100'
-              : 'bg-zinc-900/80 border-zinc-600 text-zinc-100 hover:bg-zinc-800'
-          }`}
-        >
-          {isPaused ? '继续 (P)' : '暂停 (P)'}
+    <div className="absolute inset-0 z-10 pointer-events-none select-none font-serif text-stone-100">
+      {/* Boss readout: thin framed bars, reserved contrast, no giant permanent slab. */}
+      <div className="absolute left-1/2 top-4 w-[min(62vw,610px)] -translate-x-1/2">
+        <div className="border-x border-amber-200/20 bg-gradient-to-b from-zinc-950/90 via-zinc-950/70 to-transparent px-5 pb-4 pt-2 shadow-[0_12px_34px_rgba(0,0,0,.3)]">
+          <div className="mb-2 flex items-end justify-between gap-3">
+            <div className="min-w-0">
+              <p className="mb-1 text-[10px] uppercase tracking-[0.32em] text-amber-200/65">{bossTitle}</p>
+              <h2 className="truncate text-lg font-bold tracking-[0.18em] text-stone-100 drop-shadow-md">{bossName}</h2>
+            </div>
+            <span className="shrink-0 font-mono text-[11px] text-stone-300/65">{bossHealth}%</span>
+          </div>
+          <div className="relative h-[9px] overflow-hidden border border-rose-950/90 bg-zinc-950 shadow-[inset_0_0_8px_rgba(0,0,0,.7)]">
+            <div className="h-full bg-gradient-to-r from-[#621b29] via-[#b63342] to-[#e37867] shadow-[0_0_12px_rgba(220,38,38,.45)] transition-[width] duration-100" style={{ width: `${bossHealth}%` }}/>
+            <div className="absolute inset-x-0 top-0 h-px bg-white/15"/>
+          </div>
+          <div className="mt-[5px] flex items-center gap-3">
+            <span className="text-[10px] tracking-[0.16em] text-amber-200/75">架势</span>
+            <div className="h-[5px] flex-1 overflow-hidden bg-zinc-950/90">
+              <div className="h-full bg-gradient-to-r from-amber-700 to-amber-300 shadow-[0_0_12px_rgba(251,191,36,.6)] transition-[width] duration-75" style={{ width: `${bossStance}%` }}/>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Real buttons remain clickable; overlays never consume combat mouse input. */}
+      <div className="absolute right-4 top-4 z-20 flex flex-col items-end gap-2 pointer-events-auto">
+        <button type="button" onClick={onTogglePause} className="border border-stone-400/30 bg-zinc-950/85 px-3 py-2 text-xs tracking-wider text-stone-100 shadow-lg transition hover:border-amber-300/70 hover:text-amber-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300">
+          {isPaused ? '▶ 继续 · P' : 'Ⅱ 暂停 · P'}
         </button>
-        <button
-          onClick={onResetLevel}
-          className="px-4 py-1 rounded border border-red-700 bg-red-900/80 text-red-100 text-sm font-semibold hover:bg-red-800"
-        >
+        <button type="button" onClick={onResetLevel} className="border border-rose-800/40 bg-zinc-950/75 px-3 py-1.5 text-xs text-rose-200/85 transition hover:border-rose-400 hover:text-rose-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-300">
           重置关卡
         </button>
-        <span className="text-[11px] text-red-200 text-center">慎重：重置将清空所有积累</span>
+        <span className="text-right text-[10px] text-rose-200/70">将清空本次积累</span>
       </div>
 
-      <div className="absolute top-0 left-0 w-full h-full pointer-events-none p-4 flex flex-col justify-between">
-        {/* TOP: BOSS INFO */}
-        <div className="w-full max-w-2xl mx-auto mt-2">
-          <h2 className="text-xl font-bold text-red-500 tracking-widest uppercase drop-shadow-md mb-1">{bossName}</h2>
-          <p className="text-xs text-amber-300/80 mb-2">{bossTitle} · 观察出招名称与前摇进度判断反制时机</p>
-          {/* Boss HP */}
-          <div className="w-full h-4 bg-zinc-800 border border-zinc-600 relative rounded-sm overflow-hidden">
-            <div 
-              className="h-full bg-red-700 transition-all duration-100" 
-              style={{ width: `${(bossHp / bossMaxHp) * 100}%` }}
-            ></div>
-          </div>
-          {/* Boss Posture */}
-          <div className="w-2/3 mx-auto mt-1 h-2 bg-zinc-800/50 relative rounded-sm">
-            <div 
-              className="h-full bg-orange-500 transition-all duration-75 shadow-[0_0_10px_rgba(249,115,22,0.8)]" 
-              style={{ width: `${(bossPosture / bossMaxPosture) * 100}%` }}
-            ></div>
-          </div>
+      {/* Short combat callouts only; never pulse the entire HUD. */}
+      {combatLog && (
+        <div className="absolute left-1/2 top-[24%] w-max max-w-[60vw] -translate-x-1/2 text-center">
+          <span className={`inline-block max-w-full border-y px-5 py-1.5 text-lg font-bold tracking-widest backdrop-blur-[2px] ${isPerilousMessage ? 'border-rose-500/50 bg-rose-950/55 text-rose-100' : isParryMessage ? 'border-amber-300/50 bg-amber-950/50 text-amber-200' : isDeathblowMessage ? 'border-rose-300/70 bg-black/60 text-rose-100' : 'border-white/15 bg-black/35 text-stone-100/90'}`}>
+            {combatLog}
+          </span>
         </div>
+      )}
 
-        {/* CENTER: LOG */}
-        <div className="text-center mt-16">
-          <p className="text-amber-300 font-serif text-2xl font-bold animate-pulse drop-shadow-md bg-black/40 inline-block px-4 py-1 rounded border border-amber-900/30">{combatLog}</p>
-        </div>
-
-        {/* BOTTOM: PLAYER INFO */}
-        <div className="w-full max-w-lg mx-auto mb-4 flex items-end gap-4">
-          {/* Spirit Emblems */}
-          <div className="bg-zinc-800/80 border border-blue-700 p-2 rounded flex flex-col items-center">
-            <div className="text-blue-400 font-bold text-2xl">{spiritEmblems}</div>
-            <div className="text-xs text-zinc-400">纸人</div>
-            <div className="text-[10px] text-zinc-500">(Q:手里剑 / S:大招)</div>
+      {/* Low-profile player meter, with explicit number and stance feedback. */}
+      <div className="absolute bottom-5 left-5 w-[min(43vw,400px)]">
+        <div className="border-l-2 border-amber-400/45 bg-gradient-to-r from-zinc-950/95 via-zinc-950/75 to-transparent px-4 py-3 shadow-[0_12px_32px_rgba(0,0,0,.45)]">
+          <div className="mb-1.5 flex items-baseline justify-between gap-2">
+            <span className="text-sm font-bold tracking-[0.3em] text-amber-100">只狼</span>
+            <span className="font-mono text-xs tabular-nums text-stone-200/85">{Math.max(0, Math.ceil(playerHp))} <span className="text-stone-400">/ {playerMaxHp}</span></span>
           </div>
-
-          {/* Gourd Counter */}
-          <div className="bg-zinc-800/80 border border-amber-700 p-2 rounded flex flex-col items-center">
-            <div className="text-amber-500 font-bold text-2xl">{gourds}</div>
-            <div className="text-xs text-zinc-400">伤药葫芦</div>
-            <div className="text-[10px] text-zinc-500">(按 R)</div>
+          <div className="h-[10px] overflow-hidden border border-emerald-950 bg-zinc-950">
+            <div className="h-full bg-gradient-to-r from-[#176e55] via-[#35a283] to-[#a7dfb6] transition-[width] duration-100" style={{ width: `${playerHealth}%` }}/>
           </div>
-
-          <div className="flex-grow">
-            <div className="flex justify-between items-end mb-1">
-              <span className="text-zinc-400 font-bold font-serif">只狼</span>
-              <span className="text-xl text-zinc-100 font-mono">{Math.max(0, Math.ceil(playerHp))} / {playerMaxHp}</span>
-            </div>
-            {/* Player HP */}
-            <div className="w-full h-5 bg-zinc-800 border border-zinc-500 relative rounded overflow-hidden">
-              <div 
-                className="h-full bg-emerald-600 transition-all duration-100" 
-                style={{ width: `${(playerHp / playerMaxHp) * 100}%` }}
-              ></div>
-            </div>
-            {/* Player Posture */}
-            <div className="mt-2">
-              <div className="text-center text-xs text-orange-400 uppercase tracking-widest mb-1">架势 (Posture)</div>
-              <div className="w-full h-3 bg-zinc-900 border border-orange-900/50 relative rounded">
-                 <div 
-                    className="h-full bg-orange-400 transition-all duration-75" 
-                    style={{ width: `${(playerPosture / playerMaxPosture) * 100}%` }}
-                  ></div>
-              </div>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-[10px] tracking-widest text-amber-200/65">架势</span>
+            <div className="h-1.5 flex-1 bg-black/70">
+              <div className="h-full bg-gradient-to-r from-amber-800 to-amber-300 transition-[width] duration-75" style={{ width: `${playerStance}%` }}/>
             </div>
           </div>
-        </div>
-        
-        {/* Controls Hint */}
-        <div className="absolute bottom-4 right-4 text-xs text-zinc-500 text-right bg-black/50 p-2 rounded border border-zinc-800">
-          <p>WASD / 方向键 : 移动</p>
-          <p>左键 : 攻击</p>
-          <p>右键 (长按) : 防御</p>
-          <p>右键 (点击) : 弹反</p>
-          <p>R / 上键 : 喝药</p>
-          <p>Q : 手里剑 (1纸人)</p>
-          <p>S / 下键 : 飞渡浮舟 (2纸人)</p>
-          <p>E (长按) : 蓄力突刺</p>
-          <p>空格 : 跳跃</p>
-          <p>P : 暂停/继续 · 上方按钮可重置</p>
+          <div className="mt-3 flex items-center gap-2">
+            <div className="flex items-center gap-2 border border-cyan-400/25 bg-cyan-950/25 px-3 py-1.5">
+              <span aria-hidden="true" className="text-xl text-cyan-300">◆</span>
+              <span className="font-mono text-lg tabular-nums text-cyan-100">{spiritEmblems}</span>
+              <span className="text-[10px] text-stone-400">纸人 · Q/S</span>
+            </div>
+            <div className="flex items-center gap-2 border border-amber-400/25 bg-amber-950/25 px-3 py-1.5">
+              <span aria-hidden="true" className="text-xl text-amber-300">◈</span>
+              <span className="font-mono text-lg tabular-nums text-amber-100">{gourds}</span>
+              <span className="text-[10px] text-stone-400">葫芦 · R</span>
+            </div>
+          </div>
         </div>
       </div>
-    </>
+
+      {/* Hints are small and placed away from the duel. */}
+      <div className="absolute bottom-5 right-5 hidden max-w-[220px] border-r border-stone-300/20 bg-gradient-to-l from-zinc-950/85 to-transparent py-3 pl-6 pr-3 text-right font-sans text-[11px] leading-5 tracking-wide text-stone-300/75 lg:block">
+        <p>WASD 移动 · 空格 跳跃</p>
+        <p>左键 攻击 · 右键 弹反 / 格挡</p>
+        <p>双击 A/D 闪避</p>
+        <p>Q 手里剑 · S 飞渡浮舟</p>
+        <p>E 蓄力突刺 · R 喝药</p>
+      </div>
+    </div>
   );
 };
 

@@ -4,6 +4,9 @@ import { BossData, PlayerStats } from '../types';
 import { playCombatSound } from '../utils/audio';
 import { advanceCombatClock, advanceParryFrame, PARRY_INPUT_BUFFER_FRAMES } from '../utils/combatClock';
 import { chooseBossPattern, chooseBossReaction, getFollowupCue } from '../utils/bossPatterns';
+import { getBossVisualTheme, IMPACT_STYLES, shakeOffset } from '../utils/visualTheme';
+import { drawBattlefield, drawGroundContact, drawBladeTrail, drawImpactCues, drawScreenGrade } from '../utils/combatVisuals';
+import type { ImpactCue, ImpactKind } from '../utils/combatVisuals';
 
 interface CombatCanvasProps {
   bossData: BossData;
@@ -435,6 +438,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     paused: false,
     flashIntensity: 0,
     parrySuccessTimer: 0, // Timer for parry success visual effect
+    impacts: [] as ImpactCue[],
     inputBuffer: { parry: 0 },
     pendingShots: [] as { atFrame: number }[],
     pendingCounterFrame: null as number | null,
@@ -523,6 +527,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     () => getBossVisualProfile(level, bossData.visualColor),
     [level, bossData.visualColor]
   );
+  const visualTheme = useMemo(() => getBossVisualTheme(bossData.style), [bossData.style]);
 
   // --- VFX ---
   const spawnSparks = (x: number, y: number, count: number, color: string = '#fbbf24') => {
@@ -535,6 +540,12 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         color
       });
     }
+  };
+
+  const emitImpact = (kind: ImpactKind, x: number, y: number) => {
+    const impacts = gameState.current.impacts;
+    if (impacts.length >= 24) impacts.shift();
+    impacts.push({ kind, x, y, age: 0, duration: IMPACT_STYLES[kind].duration });
   };
 
   const spawnDashTrail = (entity: any) => {
@@ -702,6 +713,10 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     if (state.shake > 0) state.shake *= 0.9;
     if (state.flashIntensity > 0) state.flashIntensity -= 0.1;
     if (state.parrySuccessTimer > 0) state.parrySuccessTimer--;
+    for (let i = state.impacts.length - 1; i >= 0; i--) {
+      state.impacts[i].age++;
+      if (state.impacts[i].age >= state.impacts[i].duration) state.impacts.splice(i, 1);
+    }
 
     // Update combat particles in simulation time, not per browser paint.
     for (let i = state.particles.length - 1; i >= 0; i--) {
@@ -1087,6 +1102,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                 setLog("弹反手里剑！");
                 playCombatSound('PARRY');
                 spawnSparks(p.x, p.y, 15, '#fcd34d');
+                emitImpact('PARRY', p.x, p.y);
                 state.parrySuccessTimer = 20;
                 // Deflect back
                 p.vx = -p.vx * 1.2;
@@ -1097,11 +1113,13 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                 setLog("格挡手里剑");
                 playCombatSound('BLOCK');
                 spawnSparks(p.x, p.y, 8, '#a1a1aa');
+                emitImpact('BLOCK', p.x, p.y);
                 player.posture += 10;
             } else {
                 // Hit by shuriken
                 playCombatSound('HIT');
                 spawnSparks(player.x, player.y, 10, '#ef4444');
+                emitImpact('HIT', player.x + player.width / 2, player.y + 30);
                 const dmg = bossData.stats.damage * 0.4;
                 player.hp -= dmg;
                 player.posture += 5;
@@ -1185,6 +1203,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       boss.vx = 0;
       setLog('二阶段！敌人改变了进攻节奏');
       playCombatSound('BREAK');
+      emitImpact('PERILOUS', boss.x + boss.width / 2, boss.y + boss.height / 2);
       triggerShake(8);
     }
 
@@ -1389,6 +1408,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                setLog("完美弹反！");
                playCombatSound('PARRY');
                spawnSparks((player.x + boss.x)/2, player.y + 30, 50, '#fcd34d');
+               emitImpact('PARRY', (player.x + boss.x) / 2, player.y + 30);
                triggerShake(20);
                triggerHitStop(12);
                state.flashIntensity = 0.8;
@@ -1420,6 +1440,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                setLog("防御");
                playCombatSound('BLOCK');
                spawnSparks((player.x + boss.x)/2, player.y + 30, 10, '#a1a1aa');
+               emitImpact('BLOCK', (player.x + boss.x) / 2, player.y + 30);
                triggerShake(3);
                triggerHitStop(2);
                
@@ -1448,6 +1469,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
                }
                playCombatSound('HIT');
                spawnSparks(player.x, player.y, isPerilousHit ? 70 : 25, '#ef4444');
+               emitImpact(isPerilousHit ? 'PERILOUS' : 'HIT', player.x + player.width / 2, player.y + 30);
                triggerShake(isPerilousHit ? 35 : 12);
                triggerHitStop(isPerilousHit ? 14 : 6);
                state.flashIntensity = Math.min(1, state.flashIntensity + (isPerilousHit ? 0.35 : 0.2));
@@ -1553,6 +1575,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       boss.hp -= boss.maxHp * 0.5; 
       boss.posture = 0;
       spawnSparks(boss.x, boss.y, 80, '#ef4444');
+      emitImpact('DEATHBLOW', boss.x + boss.width / 2, boss.y + boss.height / 2);
       triggerShake(20);
       triggerHitStop(40);
       boss.state = 'HIT';
@@ -1580,7 +1603,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
        if (checkCollision(pAttackBox, boss)) {
          if (boss.state === 'BLOCK') {
             playCombatSound('BLOCK');
-            spawnSparks(boss.x + 25, boss.y + 40, 10, '#a1a1aa'); 
+            spawnSparks(boss.x + 25, boss.y + 40, 10, '#a1a1aa');
+            emitImpact('BLOCK', boss.x + 25, boss.y + 40); 
             triggerHitStop(3);
             setLog("被格挡！");
             boss.posture += 5 + (playerStats.attackPower * 0.15);
@@ -1596,6 +1620,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
            playCombatSound('HIT');
            const sparkCount = isThrust ? 18 : 12;
            spawnSparks(boss.x + 25, boss.y + 40, sparkCount, '#fca5a5');
+           emitImpact('HIT', boss.x + 25, boss.y + 40);
            const impactShake = isThrust ? 12 : 7;
            triggerShake(impactShake);
            triggerHitStop(isThrust ? 8 : 5);
@@ -1657,27 +1682,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
   // --- RENDER FUNCTIONS ---
   const drawBackground = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
-    ctx.fillStyle = '#e4e4e7';
-    ctx.shadowBlur = 20;
-    ctx.shadowColor = '#fff';
-    ctx.beginPath();
-    ctx.arc(width - 100, 100, 50, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-
-    ctx.fillStyle = '#27272a';
-    ctx.fillRect(0, GROUND_Y + 60, width, 200);
-    
-    ctx.strokeStyle = '#475569';
-    ctx.lineWidth = 1;
-    for (let i = 0; i < width; i += 15) {
-        const h = 20 + ((i * 17) % 31);
-        const sway = ((i * 13) % 11) - 5;
-        ctx.beginPath();
-        ctx.moveTo(i, GROUND_Y + 60);
-        ctx.quadraticCurveTo(i + 5, GROUND_Y + 60 - h/2, i + sway, GROUND_Y + 60 - h);
-        ctx.stroke();
-    }
+    const { player, boss, frame } = gameState.current;
+    const focusX = (player.x + player.width / 2 + boss.x + boss.width / 2) / 2;
+    drawBattlefield(ctx, width, height, frame, focusX, visualTheme);
   };
 
   const drawWolf = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, state: any, frame: number) => {
@@ -2925,13 +2932,20 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     const { player, boss, particles, projectiles, shake, frame, sakura } = gameState.current;
 
     ctx.save();
-    const dx = (Math.random() - 0.5) * shake;
-    const dy = (Math.random() - 0.5) * shake;
-    ctx.translate(dx, dy);
+    const offset = shakeOffset(frame, shake);
+    ctx.translate(offset.x, offset.y);
+    const phaseZoom = 1 + 0.018 * Math.sin(Math.PI * Math.min(1, boss.phaseNoticeTimer / 115));
+    if (phaseZoom > 1) {
+      ctx.translate(ctx.canvas.width / 2, ctx.canvas.height / 2);
+      ctx.scale(phaseZoom, phaseZoom);
+      ctx.translate(-ctx.canvas.width / 2, -ctx.canvas.height / 2);
+    }
 
     ctx.fillStyle = '#18181b';
     ctx.fillRect(-10, -10, ctx.canvas.width + 20, ctx.canvas.height + 20);
     drawBackground(ctx, ctx.canvas.width, ctx.canvas.height);
+    drawGroundContact(ctx, player.x + player.width / 2, player.y + player.height, player.width * 1.9, player.y < GROUND_Y - 3, '#e2e8f0');
+    drawGroundContact(ctx, boss.x + boss.width / 2, boss.y + boss.height, boss.width * 1.6, boss.y < GROUND_Y - 3, visualTheme.primary);
 
     sakura.forEach(s => {
         ctx.save();
@@ -2972,7 +2986,16 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.restore();
     }
 
+    ctx.save();
+    ctx.shadowColor = '#dbeafe';
+    ctx.shadowBlur = player.state === 'HIT' ? 3 : 7;
     drawWolf(ctx, player.x, player.y, player.width, player.height, player, frame);
+    ctx.restore();
+    if (player.state === 'ATTACK' || player.state === 'THRUST_RELEASE') {
+      const isThrust = player.state === 'THRUST_RELEASE';
+      const progress = isThrust ? 1 - player.attackTimer / 30 : 1 - player.attackTimer / 18;
+      drawBladeTrail(ctx, player.x + player.width / 2, player.y + player.height * 0.45, player.facingRight ? 1 : -1, isThrust ? 'THRUST' : 'LIGHT', progress, '#f8fafc');
+    }
 
     // Show golden aura only on successful parry
     if (gameState.current.parrySuccessTimer > 0) {
@@ -3046,7 +3069,11 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.restore();
     }
 
+    ctx.save();
+    ctx.shadowColor = visualTheme.primary;
+    ctx.shadowBlur = boss.state === 'WINDUP' ? 15 : 6;
     drawBossFigure(ctx, boss.x, boss.y, boss.width, boss.height, boss, bossColor, frame, bossVisualProfile);
+    ctx.restore();
     
     if (boss.state === 'RECOVER') {
         ctx.fillStyle = '#fff';
@@ -3055,26 +3082,15 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     }
 
     if (boss.state === 'ATTACK') {
-       const props = boss.attackType === 'HEAVY' ? ATK_HEAVY :
-                    (boss.attackType === 'COMBO' ? ATK_COMBO :
-                    (boss.attackType === 'SWEEP' ? ATK_SWEEP : ATK_LIGHT));
-       const progress = 1 - (boss.attackTimer / props.active);
-       ctx.save();
-       ctx.globalAlpha = boss.attackType === 'HEAVY' ? 0.5 : 0.3;
-       ctx.fillStyle = boss.isPerilous ? '#b91c1c' : (boss.attackType === 'HEAVY' ? '#ef4444' : '#f59e0b'); 
-       const centerX = boss.x + boss.width / 2;
-       const centerY = boss.y + boss.height / 2;
-       const radius = props.range; 
-       const direction = boss.faceRight ? 1 : -1;
-       ctx.beginPath();
-       ctx.moveTo(centerX, centerY);
-       const startAngle = direction === 1 ? -Math.PI/2 : -Math.PI/2;
-       const endAngle = direction === 1 ? Math.PI/2 : -3 * Math.PI/2;
-       const currentEndAngle = startAngle + (endAngle - startAngle) * progress;
-       ctx.arc(centerX, centerY, radius, startAngle, currentEndAngle, direction === -1);
-       ctx.lineTo(centerX, centerY);
-       ctx.fill();
-       ctx.restore();
+      const props = boss.attackType === 'THRUST' ? ATK_THRUST :
+                    boss.attackType === 'HEAVY' ? ATK_HEAVY :
+                    boss.attackType === 'SWEEP' ? ATK_SWEEP :
+                    boss.attackType === 'COMBO' ? ATK_COMBO : ATK_LIGHT;
+      const progress = 1 - boss.attackTimer / props.active;
+      drawBladeTrail(ctx, boss.x + boss.width / 2,
+        boss.y + (boss.attackType === 'SWEEP' ? boss.height * 0.73 : boss.height * 0.47),
+        boss.faceRight ? 1 : -1, boss.attackType,
+        progress, boss.isPerilous ? '#fb7185' : visualTheme.trail);
     }
 
     if ((boss.state === 'WINDUP' || boss.volleyNoticeTimer > 0) && boss.telegraphLabel) {
@@ -3114,6 +3130,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       ctx.fillRect(p.x, p.y, 3, 3);
     });
     
+    drawImpactCues(ctx, gameState.current.impacts);
+
     gameState.current.shockwaves.forEach(sw => {
        ctx.save();
        ctx.strokeStyle = `rgba(255, 215, 0, ${sw.alpha})`; 
@@ -3124,10 +3142,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
        ctx.restore();
     });
 
-    if (gameState.current.flashIntensity > 0) {
-        ctx.fillStyle = `rgba(255, 255, 255, ${gameState.current.flashIntensity})`;
-        ctx.fillRect(-100, -100, ctx.canvas.width + 200, ctx.canvas.height + 200);
-    }
+    drawScreenGrade(ctx, ctx.canvas.width, ctx.canvas.height,
+      boss.phaseNoticeTimer / 115, gameState.current.flashIntensity);
 
     if (gameState.current.paused) {
         ctx.save();
