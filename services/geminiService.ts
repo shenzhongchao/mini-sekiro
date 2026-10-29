@@ -1,17 +1,8 @@
 
 import { BossData, Item, ItemCategory, ItemStats, Rarity } from "../types";
+import { getBossStyleForLevel, getBossStyleName, listBossPatterns } from "../utils/bossPatterns";
 
 // --- CONSTANTS & DATA POOLS ---
-
-const BOSS_TITLES = [
-  "苇名流", "内府军", "孤影众", "乱波", "赤备", "仙峰寺", "淤加美", "罗伯特", "野盗", "剑圣", "修罗"
-];
-
-const BOSS_NAMES = [
-  "佐濑", "山内", "鬼刑部", "弦一郎", "义父", "一心", "破戒僧", "狮子猿", "怨恨", "蝴蝶", "枭", "道玄", "丈", "巴"
-];
-
-const BOSS_MOVES = ["下段斩", "突刺", "跳劈", "飞渡浮舟", "巨型忍者突刺", "不死斩", "一文字", "龙闪"];
 
 const BEAD_VARIANTS = [
   { name: '苇名佛珠碎片', desc: '残留苇名武人的祈愿。', vitality: 12, posture: 6 },
@@ -359,31 +350,22 @@ export const generateBossForLevel = async (level: number): Promise<BossData> => 
   // Simulate async delay to mimic "loading"
   await new Promise(resolve => setTimeout(resolve, 600));
 
-  let name = "";
-  let title = getRandomElement(BOSS_TITLES);
-  let visualColor = "#a855f7"; // Purple default
-
-  // Specific Overrides
-  if (level === 1) {
-    name = "低市晚苗";
-    title = "内府大将";
-    visualColor = "#d97706"; // Amber
-  } else if (level === 2) {
-    name = "压苗柱长";
-    title = "希望之党";
-    visualColor = "#16a34a"; // Green
-  } else {
-    // Random Name Generation
-    const baseName = getRandomElement(BOSS_NAMES);
-    // Add a random suffix letter or number to make it feel unique (e.g. "Genichiro B")
-    const suffix = String.fromCharCode(65 + Math.floor(Math.random()*26)); 
-    name = `${baseName} · ${suffix}`;
-
-    // Color based on difficulty tier
-    if (level <= 5) visualColor = "#d97706"; // Amber
-    else if (level <= 15) visualColor = "#dc2626"; // Red
-    else visualColor = "#000000"; // Black/Ultimate
-  }
+  const style = getBossStyleForLevel(level) as BossData['style'];
+  const styleNames: Record<BossData['style'], string[]> = {
+    SWORDSMAN: ['佐濑宗介', '山内剑豪', '苇名守门人'],
+    SHADOW: ['孤影·青岚', '乱波·夜隐', '孤影·乌羽'],
+    MONK: ['破戒·鸣钟', '仙峰·行者', '护法院僧正']
+  };
+  const styleColors: Record<BossData['style'], string> = {
+    SWORDSMAN: '#d97706',
+    SHADOW: '#6366f1',
+    MONK: '#a78bfa'
+  };
+  const series = Math.floor((Math.max(1, level) - 1) / 3);
+  const names = styleNames[style];
+  const name = names[series % names.length] + (series > 0 ? ` · 第${series + 1}式` : '');
+  const title = getBossStyleName(style);
+  const visualColor = styleColors[style];
 
   // Stats Scaling
   // HP: Starts around 300, scales up to ~3000 at level 20
@@ -401,17 +383,14 @@ export const generateBossForLevel = async (level: number): Promise<BossData> => 
   // Speed
   const speed = Math.min(8, 2 + (level * 0.25));
 
-  // Moveset selection (Visual flavor only in this version)
-  const moves = [];
-  const numMoves = Math.min(4, 1 + Math.floor(level / 5));
-  for(let i=0; i<numMoves; i++) {
-      moves.push(getRandomElement(BOSS_MOVES));
-  }
+  // These names now come from the same executable patterns used by combat.
+  const moves = listBossPatterns(style, 2).map(pattern => pattern.name);
 
   return {
+    style,
     name: name,
     title: title,
-    description: `第 ${level} 关的守门人。`,
+    description: `第 ${level} 关 · ${title}。拥有独立招式与二阶段变化。`,
     visualColor: visualColor,
     stats: {
       maxHp,

@@ -70,7 +70,10 @@ export interface PlayerStats {
   spiritEmblems: number; // Resource for prosthetic tools
 }
 
+export type BossStyle = 'SWORDSMAN' | 'SHADOW' | 'MONK';
+
 export interface BossData {
+  style: BossStyle;
   name: string;
   title: string;
   description: string;
@@ -82,7 +85,7 @@ export interface BossData {
     damage: number;
     speed: number; // movement speed
   };
-  moves: string[]; // Names of special moves
+  moves: string[]; // Executable attack patterns, including the phase-two move
 }
 
 export interface CombatResult {

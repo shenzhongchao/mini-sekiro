@@ -3,6 +3,7 @@ import React from 'react';
 
 interface UIOverlayProps {
   bossName: string;
+  bossTitle: string;
   bossHp: number;
   bossMaxHp: number;
   bossPosture: number;
@@ -20,7 +21,7 @@ interface UIOverlayProps {
 }
 
 const UIOverlay: React.FC<UIOverlayProps> = ({
-  bossName, bossHp, bossMaxHp, bossPosture, bossMaxPosture,
+  bossName, bossTitle, bossHp, bossMaxHp, bossPosture, bossMaxPosture,
   playerHp, playerMaxHp, playerPosture, playerMaxPosture, combatLog, gourds, spiritEmblems,
   isPaused, onTogglePause, onResetLevel
 }) => {
@@ -50,6 +51,7 @@ const UIOverlay: React.FC<UIOverlayProps> = ({
         {/* TOP: BOSS INFO */}
         <div className="w-full max-w-2xl mx-auto mt-2">
           <h2 className="text-xl font-bold text-red-500 tracking-widest uppercase drop-shadow-md mb-1">{bossName}</h2>
+          <p className="text-xs text-amber-300/80 mb-2">{bossTitle} · 观察出招名称与前摇进度判断反制时机</p>
           {/* Boss HP */}
           <div className="w-full h-4 bg-zinc-800 border border-zinc-600 relative rounded-sm overflow-hidden">
             <div 

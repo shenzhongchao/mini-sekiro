@@ -6,6 +6,7 @@ import CombatCanvas from './components/CombatCanvas';
 import UIOverlay from './components/UIOverlay';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { initAudio } from './utils/audio';
+import { getBossStyleForLevel, getBossStyleName } from './utils/bossPatterns';
 
 const BEAD_FRAGMENT_THRESHOLD = 3;
 const BEAD_HP_BONUS = 35;
@@ -402,12 +403,13 @@ const App: React.FC = () => {
               key={level}
               disabled={!unlocked}
               onClick={() => startLevel(level)}
-              className={`w-16 h-16 flex items-center justify-center text-xl font-bold border-2 rounded transition-all
+              className={`w-24 h-20 flex flex-col items-center justify-center gap-1 border-2 rounded transition-all
                 ${unlocked 
                   ? 'border-amber-600 bg-zinc-800 hover:bg-amber-900 hover:text-amber-200 hover:scale-105 cursor-pointer text-amber-500' 
                   : 'border-zinc-800 bg-zinc-950 text-zinc-700 cursor-not-allowed'}`}
             >
-              {level}
+              <span className="text-xl font-bold">{level}</span>
+              <span className="text-[11px] tracking-normal">{getBossStyleName(getBossStyleForLevel(level))}</span>
             </button>
           );
         })}
@@ -584,6 +586,7 @@ const App: React.FC = () => {
           />
           <UIOverlay 
             bossName={currentBoss.name}
+            bossTitle={currentBoss.title}
             bossHp={hudState.bHp} bossMaxHp={hudState.bMaxHp} bossPosture={hudState.bPost} bossMaxPosture={hudState.bMaxPost}
             playerHp={hudState.pHp} playerMaxHp={hudState.pMaxHp} playerPosture={hudState.pPost} playerMaxPosture={hudState.pMaxPost}
             combatLog={combatLog}

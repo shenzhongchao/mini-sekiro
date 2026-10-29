@@ -3,6 +3,7 @@ import React, { useRef, useEffect, useMemo } from 'react';
 import { BossData, PlayerStats } from '../types';
 import { playCombatSound } from '../utils/audio';
 import { advanceCombatClock, advanceParryFrame, PARRY_INPUT_BUFFER_FRAMES } from '../utils/combatClock';
+import { chooseBossPattern, chooseBossReaction, getFollowupCue } from '../utils/bossPatterns';
 
 interface CombatCanvasProps {
   bossData: BossData;
@@ -435,6 +436,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     flashIntensity: 0,
     parrySuccessTimer: 0, // Timer for parry success visual effect
     inputBuffer: { parry: 0 },
+    pendingShots: [] as { atFrame: number }[],
+    pendingCounterFrame: null as number | null,
     particles: [] as { x: number; y: number; vx: number; vy: number; life: number; color: string }[],
     shockwaves: [] as { x: number; y: number; radius: number; alpha: number }[],
     projectiles: [] as { x: number; y: number; vx: number; vy: number; life: number; rotation: number; owner: 'player' | 'boss' }[],
@@ -483,6 +486,16 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       attackType: 'LIGHT' as 'LIGHT' | 'HEAVY' | 'COMBO' | 'THRUST' | 'SWEEP',
       moveQueue: [] as string[],
       isPerilous: false,
+      phase: 1,
+      phaseNoticeTimer: 0,
+      attackIndex: 0,
+      lastPatternId: '',
+      telegraphLabel: '',
+      lastShurikenIndex: -1,
+      reactionIndex: 0,
+      reactionCooldown: 0,
+      threatWasActive: false,
+      volleyNoticeTimer: 0,
       paceTimer: 0,
       faceRight: false,
       postureRecoveryTimer: 0,
@@ -574,15 +587,24 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
   };
 
   // Boss counter-attack when being combo'd
+  const beginBossWindup = (attackType: 'LIGHT' | 'HEAVY' | 'COMBO' | 'THRUST' | 'SWEEP', label: string, frames: number, perilous: boolean) => {
+    const boss = gameState.current.boss;
+    boss.state = 'WINDUP';
+    boss.attackType = attackType;
+    boss.telegraphLabel = label;
+    boss.isPerilous = perilous;
+    boss.maxWindup = frames;
+    boss.attackTimer = frames;
+    setLog(perilous ? `危！${label}` : `BOSS: ${label}`);
+    if (perilous) playCombatSound('PERILOUS');
+  };
+
   const triggerBossCounterAttack = () => {
-    const { boss, player } = gameState.current;
+    const { boss } = gameState.current;
 
     // Hyper armor during counter
-    boss.state = 'WINDUP';
-    boss.attackType = 'HEAVY';
-    boss.isPerilous = Math.random() < 0.4; // 40% chance for perilous counter
-    boss.attackTimer = 25; // Fast windup
-    boss.maxWindup = 25;
+    boss.moveQueue = [];
+    beginBossWindup('HEAVY', '绝境反击 · 重斩', 37, false);
     boss.comboCounter = 0; // Reset combo counter
 
     // Burst away from corner
@@ -590,52 +612,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     boss.vx = (isLeftCorner ? 1 : -1) * 12;
     boss.vy = -12;
 
-    setLog(boss.isPerilous ? "BOSS: 危险反击！" : "BOSS: 愤怒反击！");
-    playCombatSound('PERILOUS');
+    playCombatSound('SWING');
     spawnSparks(boss.x + boss.width/2, boss.y + 40, 30, '#dc2626');
     triggerShake(10);
-  };
-
-  const calculateBossThrustChance = (player: any, boss: any, distance: number, level: number, frame: number) => {
-    if (level < 2) return 0;
-
-    const idealRange = distance >= 120 && distance <= 200;
-    const extendedRange = distance >= 90 && distance <= 240;
-    const playerVulnerable = player.state === 'HEAL' || player.state === 'THRUST_CHARGE';
-
-    if (!extendedRange && !playerVulnerable) return 0;
-
-    let chance = 0.05 + Math.min(0.2, level * 0.01);
-    if (idealRange) {
-      chance += 0.35;
-    } else if (extendedRange) {
-      chance += 0.15;
-    } else if (playerVulnerable) {
-      chance += 0.1;
-    }
-
-    if (playerVulnerable) {
-      chance += 0.35;
-    }
-
-    if (player.state === 'BLOCK') {
-      chance += 0.1;
-    }
-
-    const movingAway = (player.x < boss.x && player.vx < -1.2) || (player.x > boss.x && player.vx > 1.2);
-    if (movingAway) {
-      chance += 0.1;
-    }
-
-    if (boss.posture > boss.maxPosture * 0.65) {
-      chance -= 0.1;
-    }
-
-    if (boss.lastHitTime > 0 && frame - boss.lastHitTime < 45) {
-      chance -= 0.05;
-    }
-
-    return Math.max(0, Math.min(0.55, chance));
   };
 
   // --- PHYSICS: RIGID BODY & ELASTIC COLLISION ---
@@ -696,6 +675,30 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     const { player, boss } = state;
     state.frame++;
+    // These events run on the combat simulation clock, so pause/hit-stop
+    // cannot spawn attacks or counters in the background.
+    for (let i = state.pendingShots.length - 1; i >= 0; i--) {
+      if (state.pendingShots[i].atFrame > state.frame) continue;
+      state.pendingShots.splice(i, 1);
+      if (state.boss.state === 'HIT' || state.boss.phaseNoticeTimer > 0) continue;
+      const dir = state.player.x > state.boss.x ? 1 : -1;
+      state.projectiles.push({
+        x: state.boss.x + state.boss.width / 2 + 25 * dir,
+        y: state.boss.y + 30,
+        vx: dir * 14,
+        vy: 0,
+        life: 80,
+        rotation: 0,
+        owner: 'boss'
+      });
+      playCombatSound('THROW');
+    }
+    if (state.pendingCounterFrame !== null && state.frame >= state.pendingCounterFrame) {
+      state.pendingCounterFrame = null;
+      if (!state.gameOver && state.boss.hp > 0 && state.boss.state === 'HIT') {
+        triggerBossCounterAttack();
+      }
+    }
     if (state.shake > 0) state.shake *= 0.9;
     if (state.flashIntensity > 0) state.flashIntensity -= 0.1;
     if (state.parrySuccessTimer > 0) state.parrySuccessTimer--;
@@ -1150,6 +1153,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     boss.y += boss.vy;
     boss.vx *= FRICTION; 
     if (boss.dodgeCooldown > 0) boss.dodgeCooldown--;
+    if (boss.reactionCooldown > 0) boss.reactionCooldown--;
+    if (boss.phaseNoticeTimer > 0) boss.phaseNoticeTimer--;
+    if (boss.volleyNoticeTimer > 0) boss.volleyNoticeTimer--;
     if (boss.postureRecoveryTimer > 0) boss.postureRecoveryTimer--;
 
     if (boss.y > GROUND_Y) {
@@ -1162,81 +1168,79 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     if (boss.x < 0) { boss.x = 0; boss.vx = 0; }
     if (boss.x > ARENA_WIDTH - boss.width) { boss.x = ARENA_WIDTH - boss.width; boss.vx = 0; }
     
-    // *** REACTIVE LOGIC ***
-    const playerIsThreat = (player.state === 'ATTACK' || player.state === 'FLOATING_PASSAGE' || player.state === 'THRUST_RELEASE') && player.attackTimer > 5;
-    
-    if ((boss.state === 'IDLE' || boss.state === 'PACE' || boss.state === 'BLOCK' || boss.state === 'RECOVER') && 
-        playerIsThreat) {
-        
-        const dodgeBaseChance = 0.02 + (level * 0.004);
-        const dodgeBoost = (boss.state === 'RECOVER' || boss.state === 'BLOCK') ? 0.15 : 0;
-        
-        if (boss.dodgeCooldown <= 0 && dist < 180 && Math.random() < (dodgeBaseChance + dodgeBoost)) {
-             boss.state = 'DODGE';
-             boss.dodgeTimer = 15;
-             boss.dodgeCooldown = 120; 
-             boss.vx = (boss.faceRight ? -1 : 1) * 15; 
-             setLog("BOSS: 迅捷闪避");
-             playCombatSound('DASH');
-             spawnDashTrail(boss);
-        }
-        else if (boss.state !== 'BLOCK' && boss.state !== 'DODGE' && dist < 170) {
-            // Reaction to Thrust: Try to Mikiri/Block
-            let blockChance = 0.01 + (level * 0.003); 
-            if (player.state === 'THRUST_RELEASE') {
-                // Reward Max Charge: Lower block chance
-                if (player.thrustCharge >= MAX_CHARGE_FRAMES) {
-                    blockChance = 0.005; // 0.5% chance per frame
-                } else {
-                    blockChance = 0.02; // 2% chance per frame
-                }
-            }
+    // Enter phase two once, with a recoverable transition rather than
+    // an instant untelegraphed attack at the HP threshold.
+    if (boss.phase === 1 && boss.hp > 0 && boss.hp <= boss.maxHp * 0.55) {
+      boss.phase = 2;
+      boss.phaseNoticeTimer = 115;
+      boss.attackIndex = 0;
+      boss.lastPatternId = '';
+      boss.moveQueue = [];
+      state.pendingShots = [];
+      state.pendingCounterFrame = null;
+      boss.isPerilous = false;
+      boss.telegraphLabel = '二阶段 · 变招';
+      boss.state = 'RECOVER';
+      boss.attackTimer = 65;
+      boss.vx = 0;
+      setLog('二阶段！敌人改变了进攻节奏');
+      playCombatSound('BREAK');
+      triggerShake(8);
+    }
 
-            if (Math.random() < blockChance) {
-                boss.state = 'BLOCK';
-                boss.attackTimer = 45; 
-                boss.vx = 0;
-                setLog("BOSS: 铁壁防御");
-                playCombatSound('BLOCK'); 
-            }
+    // One readable defensive choice per distinct player attack.
+    const playerIsThreat = (player.state === 'ATTACK' || player.state === 'FLOATING_PASSAGE' || player.state === 'THRUST_RELEASE') && player.attackTimer > 5;
+    if (!playerIsThreat) {
+      boss.threatWasActive = false;
+    } else if (!boss.threatWasActive) {
+      boss.threatWasActive = true;
+      boss.reactionIndex++;
+      if (boss.state === 'IDLE' || boss.state === 'PACE' || boss.state === 'BLOCK') {
+        const reaction = chooseBossReaction(bossData.style, boss.reactionIndex, player.state, dist, boss.reactionCooldown);
+        if (reaction === 'DODGE' && boss.dodgeCooldown <= 0) {
+          boss.state = 'DODGE';
+          boss.dodgeTimer = 15;
+          boss.dodgeCooldown = 120;
+          boss.reactionCooldown = 90;
+          boss.vx = (boss.faceRight ? -1 : 1) * 15;
+          setLog('BOSS: 影步闪避');
+          playCombatSound('DASH');
+          spawnDashTrail(boss);
+        } else if (reaction === 'BLOCK') {
+          boss.state = 'BLOCK';
+          boss.attackTimer = 45;
+          boss.reactionCooldown = 80;
+          boss.vx = 0;
+          setLog('BOSS: 守势');
+          playCombatSound('BLOCK');
         }
+      }
     }
 
     // Boss State Machine
     if (boss.state === 'IDLE') {
       if (boss.attackTimer > 0) boss.attackTimer--;
       if (boss.attackTimer <= 0) {
-         // Shuriken attack - mid range (150-350 pixels)
-         const shurikenChance = 0.05 + Math.min(0.15, level * 0.005);
-         if (dist >= 150 && dist <= 350 && Math.random() < shurikenChance) {
-             setLog("BOSS: 手里剑！");
-             playCombatSound('THROW');
-             const dir = boss.faceRight ? 1 : -1;
-             // Boss throws 1-3 shuriken based on level
-             const shurikenCount = level > 10 ? 3 : (level > 5 ? 2 : 1);
-             for (let i = 0; i < shurikenCount; i++) {
-                 setTimeout(() => {
-                     state.projectiles.push({
-                         x: boss.x + boss.width/2 + (25*dir),
-                         y: boss.y + 30,
-                         vx: dir * (13 + Math.random() * 4),
-                         vy: (Math.random() - 0.5) * 2, // Slight vertical variation
-                         life: 80,
-                         rotation: 0,
-                         owner: 'boss'
-                     });
-                 }, i * 150); // Stagger throws
-             }
-             const cooldown = Math.max(70, 110 - level * 2);
-             boss.attackTimer = cooldown; // Longer cooldown to prevent spam
-             return;
+         // Only the ninja uses a patterned shuriken volley. It is queued
+         // in simulation frames instead of window.setTimeout callbacks.
+         if (bossData.style === 'SHADOW' && dist >= 150 && dist <= 350 &&
+             boss.attackIndex > 0 && boss.attackIndex % 4 === 0 &&
+             boss.lastShurikenIndex !== boss.attackIndex) {
+           boss.lastShurikenIndex = boss.attackIndex;
+           const count = boss.phase === 2 ? 3 : 2;
+           for (let i = 0; i < count; i++) {
+             state.pendingShots.push({ atFrame: state.frame + 15 + i * 10 });
+           }
+           boss.telegraphLabel = '手里剑 · 连投';
+           boss.volleyNoticeTimer = 45;
+           setLog('BOSS: 手里剑连投！');
+           boss.attackTimer = 110;
+           return;
          }
 
          if (dist > 350 && Math.random() < 0.4) {
-             boss.state = 'WINDUP';
-             boss.attackType = 'HEAVY';
-             boss.maxWindup = 45;
-             boss.attackTimer = 45;
+             boss.moveQueue = [];
+             beginBossWindup('HEAVY', '飞身跃入', 48, false);
              boss.vy = -14;
              boss.vx = (boss.faceRight ? 1 : -1) * 10;
              setLog("BOSS: 飞身跃入");
@@ -1244,62 +1248,20 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
              return;
          }
 
-         if (dist < 300 && dist > 80 && Math.random() < 0.35 && boss.paceTimer <= 0) {
-            boss.state = 'PACE';
-            boss.paceTimer = 40 + Math.random() * 40;
+         if (dist < 300 && dist > 80 && Math.random() < (bossData.style === 'SHADOW' ? 0.36 : bossData.style === 'MONK' ? 0.13 : 0.20) && boss.paceTimer <= 0) {
+           boss.state = 'PACE';
+           boss.paceTimer = bossData.style === 'MONK' ? 22 : 40;
          }
-         else if (dist < 250 && Math.random() < bossData.stats.aggression) {
-           boss.state = 'WINDUP';
-           const attackRng = Math.random();
-           const thrustChance = calculateBossThrustChance(player, boss, dist, level, state.frame);
-           const preferSweep = dist < 140;
-           let sweepChance = 0;
-           if (level > 5) {
-             const base = preferSweep ? 0.12 : 0.04;
-             const scaling = Math.min(0.12, (level - 5) * 0.01);
-             sweepChance = base + scaling;
+         else if (dist < 250) {
+           const pattern = chooseBossPattern(bossData.style, boss.phase, dist, boss.attackIndex, boss.lastPatternId);
+           if (pattern) {
+             boss.lastPatternId = pattern.id;
+             boss.attackIndex++;
+             boss.moveQueue = [...pattern.chain];
+             beginBossWindup(pattern.attackType as typeof boss.attackType, pattern.name, pattern.windup, pattern.perilous);
+           } else {
+             boss.attackTimer = 12;
            }
-
-           if (attackRng < thrustChance) {
-             boss.attackType = 'THRUST';
-             const playerVulnerable = player.state === 'HEAL' || player.state === 'THRUST_CHARGE';
-             const perilousChance = Math.min(0.85, 0.3 + level * 0.03 + (playerVulnerable ? 0.2 : 0));
-             boss.isPerilous = Math.random() < perilousChance;
-             if (boss.isPerilous) {
-               setLog("危！突刺攻击！");
-               playCombatSound('PERILOUS');
-             } else {
-               setLog("BOSS: 突刺！");
-             }
-           } else if (sweepChance > 0 && attackRng < thrustChance + sweepChance) {
-             boss.attackType = 'SWEEP';
-             boss.isPerilous = true;
-             setLog("危！横扫！跳起或后退！");
-             playCombatSound('PERILOUS');
-           } else if (attackRng < thrustChance + sweepChance + 0.25) {
-             boss.attackType = 'HEAVY';
-             boss.isPerilous = false;
-             setLog("BOSS 蓄力重击！");
-            } else if (attackRng < thrustChance + sweepChance + 0.35) {
-              boss.attackType = 'HEAVY';
-              boss.isPerilous = true;
-              setLog("危！格挡无效！");
-              playCombatSound('PERILOUS');
-            } else {
-              boss.attackType = 'LIGHT';
-              boss.isPerilous = false;
-              if (level > 3 && Math.random() > 0.5) {
-                 boss.moveQueue.push('COMBO');
-                 if (level > 10) boss.moveQueue.push('COMBO');
-              }
-            }
-            const props = boss.attackType === 'THRUST' ? ATK_THRUST :
-                          (boss.attackType === 'HEAVY' ? ATK_HEAVY :
-                          (boss.attackType === 'COMBO' ? ATK_COMBO :
-                          (boss.attackType === 'SWEEP' ? ATK_SWEEP : ATK_LIGHT)));
-            const speedMod = Math.max(0, (level * 1.5));
-            boss.maxWindup = Math.max(20, props.windup - speedMod);
-            boss.attackTimer = boss.maxWindup; 
          } else {
             const speed = bossData.stats.speed * (boss.state === 'PACE' ? 0.5 : 1);
             const direction = boss.faceRight ? 1 : -1;
@@ -1339,11 +1301,6 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       boss.paceTimer--;
       if (dist < 100) {
          boss.vx += (boss.faceRight ? -1 : 1) * 0.5; 
-      }
-      if (Math.random() < 0.02) {
-          boss.state = 'WINDUP';
-          boss.attackType = 'LIGHT';
-          boss.attackTimer = 20;
       }
       if (boss.paceTimer <= 0) {
         boss.state = 'IDLE';
@@ -1517,12 +1474,11 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
       if (boss.attackTimer <= 0) {
         if (boss.moveQueue.length > 0) {
-           boss.state = 'WINDUP';
-           boss.attackType = 'COMBO';
-           const nextProps = ATK_COMBO;
-           boss.maxWindup = nextProps.windup;
-           boss.attackTimer = nextProps.windup;
-           boss.moveQueue.pop();
+           const followup = boss.moveQueue.shift() as typeof boss.attackType;
+           const nextProps = followup === 'THRUST' ? ATK_THRUST :
+                             followup === 'SWEEP' ? ATK_SWEEP :
+                             followup === 'HEAVY' ? ATK_HEAVY : ATK_COMBO;
+           beginBossWindup(followup, getFollowupCue(followup), nextProps.windup, followup === 'THRUST' || followup === 'SWEEP');
         } else {
            boss.state = 'RECOVER';
            boss.attackTimer = props.recover; 
@@ -1589,6 +1545,9 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     }
 
     if (boss.posture >= boss.maxPosture) {
+      boss.moveQueue = [];
+      state.pendingCounterFrame = null;
+      state.pendingShots = [];
       setLog("忍杀！(DEATHBLOW)");
       playCombatSound('DEATHBLOW');
       boss.hp -= boss.maxHp * 0.5; 
@@ -1685,7 +1644,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
             if (shouldCounter) {
               // Delay counter by a frame to ensure hit animation plays
-              setTimeout(() => triggerBossCounterAttack(), 16);
+              state.pendingCounterFrame = state.frame + 1;
             }
          }
        } else {
@@ -3116,6 +3075,31 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
        ctx.lineTo(centerX, centerY);
        ctx.fill();
        ctx.restore();
+    }
+
+    if ((boss.state === 'WINDUP' || boss.volleyNoticeTimer > 0) && boss.telegraphLabel) {
+      const remaining = Math.min(1, Math.max(0, boss.volleyNoticeTimer > 0 ? boss.volleyNoticeTimer / 45 : boss.attackTimer / Math.max(1, boss.maxWindup)));
+      ctx.save();
+      const cx = boss.x + boss.width / 2;
+      const y = boss.y - (boss.isPerilous ? 120 : 85);
+      ctx.font = 'bold 17px serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = boss.isPerilous ? '#fca5a5' : '#fde68a';
+      ctx.fillText(boss.telegraphLabel, cx, y);
+      ctx.fillStyle = '#27272a';
+      ctx.fillRect(cx - 38, y + 7, 76, 4);
+      ctx.fillStyle = boss.isPerilous ? '#ef4444' : '#fbbf24';
+      ctx.fillRect(cx - 38, y + 7, 76 * (1 - remaining), 4);
+      ctx.restore();
+    }
+    if (boss.phaseNoticeTimer > 0) {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 20px serif';
+      ctx.fillStyle = '#fda4af';
+      ctx.globalAlpha = Math.min(1, boss.phaseNoticeTimer / 30);
+      ctx.fillText('第二阶段 · 变招', ctx.canvas.width / 2, 90);
+      ctx.restore();
     }
 
     if (boss.isPerilous && (boss.state === 'WINDUP' || boss.state === 'ATTACK')) {
