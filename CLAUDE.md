@@ -63,6 +63,12 @@ The game uses a centralized state machine (`GameState` enum) managed in `App.tsx
 - `utils/combatVisuals.ts`: layered 2D ink battlefield, weapon trails, ground-contact shadows, impact glyphs and vignette
 - Draw-only effects do not modify hitboxes, timing or character state; combat events emit bounded impact cues which tick at 60Hz
 
+**CombatStage.tsx / Combat HUD (PR4)**
+- Keep the 1000×500 simulation Canvas, DOM HUD and phase captions in a single logical coordinate space
+- `utils/combatStageLayout.js` letterboxes and centers the stage; ResizeObserver only changes the presentation scale, never game physics
+- HUD anchors: player at top-left, boss top-middle, controls top-right, consumables in lower strip; avoid covering attack telegraphs
+- Keep pointer and keyboard interactions working after resizing, and do not remount the Canvas on resize
+
 **CombatCanvas.tsx**
 - Self-contained combat simulation on HTML5 canvas
 - Runs on a fixed 60 Hz simulation clock, with requestAnimationFrame used only to schedule rendering
@@ -129,7 +135,7 @@ Uses Tailwind CSS via CDN (imported in index.html). Key design:
 
 ## Automated Tests
 
-Run `npm test` to verify combat timing, parry buffering, boss attack sequences, visual palettes, impact cues and stable camera shake via Node.js built-in test runner.
+Run `npm test` to verify combat timing, parry buffering, boss attack sequences, visual palettes, impact cues, stable camera shake and stage layout invariants via Node.js built-in test runner.
 
 ## Important Implementation Notes
 

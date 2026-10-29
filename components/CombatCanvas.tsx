@@ -3114,7 +3114,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       ctx.font = 'bold 20px serif';
       ctx.fillStyle = '#fda4af';
       ctx.globalAlpha = Math.min(1, boss.phaseNoticeTimer / 30);
-      ctx.fillText('第二阶段 · 变招', ctx.canvas.width / 2, 90);
+      ctx.fillText('第二阶段 · 变招', ctx.canvas.width / 2, 185);
       ctx.restore();
     }
 
@@ -3301,7 +3301,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       tabIndex={0} 
       width={ARENA_WIDTH} 
       height={500} 
-      className="border-2 border-zinc-700 rounded shadow-2xl bg-black cursor-crosshair mx-auto focus:outline-none focus:ring-2 focus:ring-amber-900"
+      className="block h-full w-full bg-black cursor-crosshair focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-400/70"
     />
   );
 };
