@@ -58,6 +58,11 @@ The game uses a centralized state machine (`GameState` enum) managed in `App.tsx
 - Handles level progression and loot collection
 - Renders different screens based on `GameState`
 
+**Visual systems (PR3)**
+- `utils/visualTheme.js`: three boss palettes and semantic impact cue colors/durations, deterministic bounded shake
+- `utils/combatVisuals.ts`: layered 2D ink battlefield, weapon trails, ground-contact shadows, impact glyphs and vignette
+- Draw-only effects do not modify hitboxes, timing or character state; combat events emit bounded impact cues which tick at 60Hz
+
 **CombatCanvas.tsx**
 - Self-contained combat simulation on HTML5 canvas
 - Runs on a fixed 60 Hz simulation clock, with requestAnimationFrame used only to schedule rendering
@@ -124,7 +129,7 @@ Uses Tailwind CSS via CDN (imported in index.html). Key design:
 
 ## Automated Tests
 
-Run `npm test` to verify combat simulation timing, parry buffering, boss style rotation, move selection, and phase-two transitions via Node.js built-in test runner.
+Run `npm test` to verify combat timing, parry buffering, boss attack sequences, visual palettes, impact cues and stable camera shake via Node.js built-in test runner.
 
 ## Important Implementation Notes
 
