@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { GameState, BossData, PlayerStats, Item, Rarity, ItemCategory, ItemStats } from './types';
 import { generateBossForLevel, generateLoot } from './services/geminiService';
 import CombatCanvas from './components/CombatCanvas';
+import CombatStage from './components/CombatStage';
 import UIOverlay from './components/UIOverlay';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { initAudio } from './utils/audio';
@@ -570,7 +571,7 @@ const App: React.FC = () => {
   };
 
   const renderCombat = () => (
-    <div className="relative w-full h-screen bg-zinc-900 flex items-center justify-center overflow-hidden">
+    <CombatStage>
       {currentBoss && (
         <>
           <CombatCanvas 
@@ -598,7 +599,7 @@ const App: React.FC = () => {
           />
         </>
       )}
-    </div>
+    </CombatStage>
   );
 
   const renderLoading = () => (
