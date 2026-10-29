@@ -70,7 +70,8 @@ The game uses a centralized state machine (`GameState` enum) managed in `App.tsx
   - Rigid body collision physics with elastic response
   - VFX (particles, shockwaves, screen shake, hit stop)
   - Special moves: Floating Passage (S), Shuriken (Q), Charged Thrust (E)
-- Boss reactivity increases with level (dodges, blocks, faster attacks)
+- Boss defense reacts once per new player attack, with style-specific choices and cooldowns
+- Three move libraries in `utils/bossPatterns.js` (SWORDSMAN, SHADOW, MONK), a 55% HP phase-two transition, telegraph labels, and queued follow-ups
 - Uses `updateHUD()` callback to sync combat state to parent
 
 **services/geminiService.ts**
@@ -93,13 +94,13 @@ The game uses a centralized state machine (`GameState` enum) managed in `App.tsx
 - Heal (R key, consumes gourd)
 - Skills (require spirit emblems):
   - Shuriken (Q): Ranged attack, 1 emblem
-  - Floating Passage (S): Multi-hit combo, 3 emblems
+  - Floating Passage (S): Multi-hit combo, 2 emblems
   - Charged Thrust (E): Hold to charge, release for powerful lunge
 
 **Boss AI:**
-- State-driven behavior with level-based intelligence
+- State-driven behavior with deterministic, style-specific attack sequences and a readable phase-two opener
 - PACE state: Boss circles player at mid-range
-- DODGE: Reactive evasion during player attacks (chance increases with level)
+- DODGE: One style-dependent defensive response per player attack, rate-limited by cooldown
 - BLOCK: Can defend against player attacks and projectiles
 - Perilous attacks (危): Cannot be blocked, must be dodged or parried
 - Posture recovery slows when taking hits
@@ -123,7 +124,7 @@ Uses Tailwind CSS via CDN (imported in index.html). Key design:
 
 ## Automated Tests
 
-Run `npm test` to verify combat simulation timing and parry input buffering via Node.js built-in test runner.
+Run `npm test` to verify combat simulation timing, parry buffering, boss style rotation, move selection, and phase-two transitions via Node.js built-in test runner.
 
 ## Important Implementation Notes
 
@@ -144,8 +145,8 @@ Run `npm test` to verify combat simulation timing and parry input buffering via 
 ## Common Development Patterns
 
 **Adding a new boss attack:**
-1. Define attack properties (windup, active, recover frames) in `CombatCanvas.tsx`
-2. Add to boss state machine in `update()` function
+1. Add a named pattern to `utils/bossPatterns.js` with `attackType`, `windup`, `perilous`, range, and `chain`
+2. Only if adding a genuinely new attack type: implement corresponding state/animation in `CombatCanvas.tsx`
 3. Implement hitbox detection in ATTACK state
 4. Add VFX calls (sparks, shake, hit stop)
 
@@ -157,6 +158,6 @@ Run `npm test` to verify combat simulation timing and parry input buffering via 
 5. Update UI overlay with cooldown indicator if needed
 
 **Balancing gameplay:**
-- Adjust constants at top of `CombatCanvas.tsx` (FPS, PARRY_WINDOW, damage multipliers)
+- Adjust attack timing in `utils/bossPatterns.js`; engine collision/recovery constants remain in `CombatCanvas.tsx`
 - Modify scaling formulas in `geminiService.ts` for boss stats
 - Change posture recovery rates in combat update loop
