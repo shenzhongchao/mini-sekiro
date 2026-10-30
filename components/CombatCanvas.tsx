@@ -1707,10 +1707,6 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     // Attack animation phases (18 frames total)
     const attackProgress = isAttack ? getPlayerProgress(state.attackTimer) : 0;
     const attackPose = isAttack ? samplePlayerAttackPose(attackProgress) : null;
-    const isWindup = attackPose?.phase === 'ANTICIPATION';
-    const isSwing = attackPose?.phase === 'STRIKE' || attackPose?.phase === 'FOLLOW_THROUGH';
-    const isRecovery = attackPose?.phase === 'RECOVERY'
-
     // Body tilt during movement and attacks
     let bodyTilt = 0;
     if (isRun && !isBlock) {
@@ -1723,8 +1719,10 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       // Slight forward lean during defensive stance for better balance
       bodyTilt = dir * 0.05;
     }
+    if (state.state === 'HIT') bodyTilt = -dir * 0.18;
 
     ctx.rotate(bodyTilt);
+    if (state.state === 'HIT') ctx.translate(-dir * 6, 5);
 
     if (attackPose) {
       ctx.translate(attackPose.lunge * dir, attackPose.sink);
@@ -2211,6 +2209,10 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     const bossPose = sampleBossActionPose(state.state, state.attackType, poseProgress);
     ctx.translate(dir * bossPose.lunge, bossPose.sink);
     ctx.rotate(dir * bossPose.lean);
+    if (state.state === 'HIT') {
+      ctx.translate(-dir * 7, 5);
+      ctx.rotate(-dir * 0.19);
+    }
 
     if (profile && profile.hasCape) {
         ctx.save();
