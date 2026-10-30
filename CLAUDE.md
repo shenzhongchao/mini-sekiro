@@ -69,6 +69,13 @@ The game uses a centralized state machine (`GameState` enum) managed in `App.tsx
 - HUD anchors: player at top-left, boss top-middle, controls top-right, consumables in lower strip; avoid covering attack telegraphs
 - Keep pointer and keyboard interactions working after resizing, and do not remount the Canvas on resize
 
+**Combat poses (PR5)**
+- `utils/combatPose.js` contains pure render-only, interpolated sword-hand/weapon-tip/torso/foot poses for the player
+- Player's attack contact is tied to `PLAYER_HIT_FRAME = 10` of an 18-frame swing; use the SAME value in collision and render timeline
+- Boss `WINDUP`, `ATTACK`, and `RECOVER` draw poses are sampled from existing timers, with continuous boundary poses; style-specific costumes are a future task
+- Do not modify game state, physics positions, hitboxes or input timestamps inside the pose helpers; motion should only be applied inside Canvas save/restore transforms
+- `tests/combatPose.test.mjs` verifies contact-frame alignment, phase interpolation and state boundary continuity
+
 **CombatCanvas.tsx**
 - Self-contained combat simulation on HTML5 canvas
 - Runs on a fixed 60 Hz simulation clock, with requestAnimationFrame used only to schedule rendering
@@ -135,7 +142,7 @@ Uses Tailwind CSS via CDN (imported in index.html). Key design:
 
 ## Automated Tests
 
-Run `npm test` to verify combat timing, parry buffering, boss attack sequences, visual palettes, impact cues, stable camera shake and stage layout invariants via Node.js built-in test runner.
+Run `npm test` to verify combat timing, parry buffering, boss attack sequences, visual palettes, impact cues, stable camera shake and stage layout invariants and four-phase attack poses via Node.js built-in test runner.
 
 ## Important Implementation Notes
 
