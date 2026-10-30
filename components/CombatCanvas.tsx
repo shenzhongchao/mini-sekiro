@@ -7,6 +7,7 @@ import { chooseBossPattern, chooseBossReaction, getFollowupCue } from '../utils/
 import { getBossVisualTheme, IMPACT_STYLES, shakeOffset } from '../utils/visualTheme';
 import { drawBattlefield, drawGroundContact, drawBladeTrail, drawImpactCues, drawScreenGrade } from '../utils/combatVisuals';
 import type { ImpactCue, ImpactKind } from '../utils/combatVisuals';
+import { samplePlayerAttackPose, sampleBossActionPose, getPlayerProgress, getPlayerTrailProgress, PLAYER_ATTACK_FRAMES, PLAYER_HIT_FRAME } from '../utils/combatPose';
 
 interface CombatCanvasProps {
   bossData: BossData;
@@ -1589,7 +1590,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     }
 
     // --- PLAYER ATTACK & THRUST ---
-    if ((player.state === 'ATTACK' && player.attackTimer === 10) || (player.state === 'THRUST_RELEASE' && player.attackTimer === 20)) { 
+    if ((player.state === 'ATTACK' && player.attackTimer === PLAYER_HIT_FRAME) || (player.state === 'THRUST_RELEASE' && player.attackTimer === 20)) { 
        const isThrust = player.state === 'THRUST_RELEASE';
        const thrustRange = 150 + (player.thrustCharge || 0); // Extended range for thrust
        
@@ -1704,19 +1705,19 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     const isFloatDive = isFloat && !isFloatAscend && !isFloatGround;
 
     // Attack animation phases (18 frames total)
-    const attackProgress = isAttack ? (18 - state.attackTimer) / 18 : 0;
-    const isWindup = attackProgress < 0.3; // First 30% is windup
-    const isSwing = attackProgress >= 0.3 && attackProgress < 0.7; // Middle 40% is swing
-    const isRecovery = attackProgress >= 0.7; // Last 30% is recovery
+    const attackProgress = isAttack ? getPlayerProgress(state.attackTimer) : 0;
+    const attackPose = isAttack ? samplePlayerAttackPose(attackProgress) : null;
+    const isWindup = attackPose?.phase === 'ANTICIPATION';
+    const isSwing = attackPose?.phase === 'STRIKE' || attackPose?.phase === 'FOLLOW_THROUGH';
+    const isRecovery = attackPose?.phase === 'RECOVERY'
 
     // Body tilt during movement and attacks
     let bodyTilt = 0;
     if (isRun && !isBlock) {
       bodyTilt = Math.sin(frame * 0.4) * 0.05 * dir;
     }
-    if (isAttack && isSwing) {
-      // Lean forward during swing
-      bodyTilt = dir * 0.12;
+    if (attackPose) {
+      bodyTilt = attackPose.lean * dir;
     }
     if (isBlock) {
       // Slight forward lean during defensive stance for better balance
@@ -1725,12 +1726,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
 
     ctx.rotate(bodyTilt);
 
-    if (isAttack) {
-      if (isWindup) {
-        ctx.translate(0, 5);
-      } else if (isRecovery) {
-        ctx.translate(0, -4);
-      }
+    if (attackPose) {
+      ctx.translate(attackPose.lunge * dir, attackPose.sink);
     }
 
     if (isFloat) {
@@ -1814,14 +1811,16 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.lineTo(10, -30);
     } else if (isAttack) {
         // Attack stance - wide stable base
-        const attackStance = isWindup ? 0 : (isSwing ? 8 : 4);
+        // Feet plant and advance independently during anticipation and release.
+        const back = attackPose?.backFoot ?? 0;
+        const front = attackPose?.frontFoot ?? 0;
         ctx.moveTo(-8, -35);
-        ctx.lineTo(-18 * dir - attackStance, 0);
-        ctx.lineTo(-8 * dir - attackStance, 0);
+        ctx.lineTo((-18 + back) * dir, 0);
+        ctx.lineTo((-8 + back) * dir, 0);
         ctx.lineTo(2, -35);
         ctx.moveTo(2, -35);
-        ctx.lineTo(12 * dir + attackStance, 0);
-        ctx.lineTo(22 * dir + attackStance, 0);
+        ctx.lineTo((12 + front) * dir, 0);
+        ctx.lineTo((22 + front) * dir, 0);
         ctx.lineTo(12, -35);
     } else {
         // Normal/Running - smoother leg animation
@@ -1899,14 +1898,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     } else if (isThrust) {
          ctx.lineTo(10 * dir, -50); // Tucked
     } else if (isAttack) {
-        // Left arm follows attack motion
-        if (isWindup) {
-            ctx.lineTo(-5 * dir, -55); // Pull back
-        } else if (isSwing) {
-            ctx.lineTo(18 * dir, -50); // Extend forward for balance
-        } else {
-            ctx.lineTo(10 * dir, -48); // Return
-        }
+        // Prosthetic arm counterbalances the active sword pose.
+        ctx.lineTo(attackPose!.offX * dir, attackPose!.offY);
     } else {
         if (state.toolCooldown > 20 && !isFloat) {
             ctx.lineTo(30 * dir, -60);
@@ -1930,17 +1923,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
          const floatArc = Math.sin(frame * 0.4) * 6;
          ctx.quadraticCurveTo(20 * dir, -70 + floatArc, 45 * dir, -50);
     } else if (isAttack) {
-        // Dynamic arm position during attack
-        if (isWindup) {
-            // Pull sword back high
-            ctx.lineTo(-8 * dir, -75);
-        } else if (isSwing) {
-            // Extend arm forward during swing
-            ctx.lineTo(35 * dir, -55);
-        } else {
-            // Recovery - arm forward but relaxing
-            ctx.lineTo(22 * dir, -58);
-        }
+        ctx.lineTo(attackPose!.handX * dir, attackPose!.handY);
     } else if (isThrust) {
          ctx.lineTo(40 * dir, -60); // Reaching forward
     } else {
@@ -2000,77 +1983,50 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.fill();
         ctx.globalAlpha = 1.0;
 
-    } else if (isAttack) {
-        // Dynamic attack animation
-        let swordX, swordY, swordEndX, swordEndY;
-
-        if (isWindup) {
-            // Sword pulled back and up
-            swordX = -8 * dir;
-            swordY = -75;
-            swordEndX = -25 * dir;
-            swordEndY = -95;
-        } else if (isSwing) {
-            // Sword swinging forward in arc
-            const swingProgress = (attackProgress - 0.3) / 0.4; // 0 to 1 during swing
-            const angle = (Math.PI * 0.9 * swingProgress) - Math.PI/3; // Swing arc
-            swordX = 35 * dir;
-            swordY = -55;
-            const swordLength = 90;
-            swordEndX = swordX + Math.cos(angle) * swordLength * dir;
-            swordEndY = swordY + Math.sin(angle) * swordLength;
-        } else {
-            // Recovery - sword forward
-            swordX = 22 * dir;
-            swordY = -58;
-            swordEndX = 75 * dir;
-            swordEndY = -45;
+    } else if (isAttack && attackPose) {
+        // The blade, hilt and hands come from the SAME interpolated pose.
+        // A faint earlier position reinforces direction without hiding the silhouette.
+        if (attackProgress > 0.36 && attackProgress < 0.71) {
+            const previous = samplePlayerAttackPose(Math.max(0, attackProgress - 0.065));
+            ctx.save();
+            ctx.globalAlpha = 0.19;
+            ctx.strokeStyle = '#bfdbfe';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(previous.handX * dir, previous.handY);
+            ctx.lineTo(previous.tipX * dir, previous.tipY);
+            ctx.stroke();
+            ctx.restore();
         }
 
-        // Draw sword
-        ctx.strokeStyle = '#e4e4e7';
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(swordX, swordY);
-        ctx.lineTo(swordEndX, swordEndY);
-        ctx.stroke();
-
-        // Sword handle
         ctx.strokeStyle = '#18181b';
         ctx.lineWidth = 5;
-        const handleStartX = isWindup ? -8 * dir : (isSwing ? 35 * dir : 22 * dir);
-        const handleStartY = isWindup ? -75 : (isSwing ? -55 : -58);
         ctx.beginPath();
         ctx.moveTo(10 * dir, -60);
-        ctx.lineTo(handleStartX, handleStartY);
+        ctx.lineTo(attackPose.handX * dir, attackPose.handY);
         ctx.stroke();
 
-        // Sword trail effect during swing
-        if (isSwing) {
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 3;
-            ctx.globalAlpha = 0.3 + (attackProgress - 0.3) * 1.5;
-            ctx.beginPath();
-            // Create smooth arc trail
-            const trailRadius = 80;
-            const startAngle = -Math.PI/2;
-            const endAngle = Math.PI/4;
-            ctx.arc(10 * dir, -60, trailRadius, startAngle * dir, endAngle * dir, dir < 0);
-            ctx.stroke();
-            ctx.globalAlpha = 1.0;
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(attackPose.handX * dir, attackPose.handY);
+        ctx.lineTo(attackPose.tipX * dir, attackPose.tipY);
+        ctx.stroke();
 
-            // Speed lines for impact
-            if (attackProgress > 0.45 && attackProgress < 0.65) {
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-                ctx.lineWidth = 2;
-                for (let i = 0; i < 3; i++) {
-                    ctx.beginPath();
-                    ctx.moveTo(swordEndX - (10 * i * dir), swordEndY - (5 * i));
-                    ctx.lineTo(swordEndX + (15 * dir), swordEndY + 5);
-                    ctx.stroke();
-                }
-            }
-        }
+        ctx.strokeStyle = '#f8fafc';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo((attackPose.handX + 1) * dir, attackPose.handY - 1);
+        ctx.lineTo((attackPose.tipX + 1) * dir, attackPose.tipY - 1);
+        ctx.stroke();
+
+        // Small hilt guard tracks the hand as the sword rotates.
+        ctx.fillStyle = '#eab308';
+        ctx.beginPath();
+        ctx.arc(attackPose.handX * dir, attackPose.handY, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+
     } else if (state.state === 'THRUST_CHARGE') {
         // Hold sword back
         ctx.strokeStyle = '#e4e4e7';
@@ -2993,7 +2949,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.restore();
     if (player.state === 'ATTACK' || player.state === 'THRUST_RELEASE') {
       const isThrust = player.state === 'THRUST_RELEASE';
-      const progress = isThrust ? 1 - player.attackTimer / 30 : 1 - player.attackTimer / 18;
+      const progress = isThrust ? 1 - player.attackTimer / 30 : getPlayerTrailProgress(getPlayerProgress(player.attackTimer));
       drawBladeTrail(ctx, player.x + player.width / 2, player.y + player.height * 0.45, player.facingRight ? 1 : -1, isThrust ? 'THRUST' : 'LIGHT', progress, '#f8fafc');
     }
 
@@ -3249,7 +3205,7 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
       if (e.button === 0) { 
         if (gameState.current.player.state === 'IDLE' || gameState.current.player.state === 'RUN') {
           gameState.current.player.state = 'ATTACK';
-          gameState.current.player.attackTimer = 18; 
+          gameState.current.player.attackTimer = PLAYER_ATTACK_FRAMES; 
         }
       } else if (e.button === 2) { 
         controls.current.block = true;
