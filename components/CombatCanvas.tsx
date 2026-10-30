@@ -2195,21 +2195,22 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     ctx.save();
     ctx.translate(x + w/2, y + h); 
     const dir = state.faceRight ? 1 : -1;
-    const isWindup = state.state === 'WINDUP';
-    const isAttack = state.state === 'ATTACK';
-    let postureOffset = 0;
-    if (isWindup && state.maxWindup) {
-        const ratio = 1 - Math.max(0, Math.min(1, state.attackTimer / state.maxWindup));
-        postureOffset = 10 * ratio;
-    } else if (isAttack) {
-        postureOffset = -6;
-    }
-    if (postureOffset !== 0) {
-        ctx.translate(0, postureOffset);
-    }
-    if (isAttack && state.attackType === 'HEAVY') {
-        ctx.rotate(dir * 0.04);
-    }
+    // The boss animation is sampled from the real WINDUP / ATTACK / RECOVER
+    // clocks; it does not change collision geometry or timers.
+    const poseProps = state.attackType === 'THRUST' ? ATK_THRUST :
+      state.attackType === 'HEAVY' ? ATK_HEAVY :
+      state.attackType === 'SWEEP' ? ATK_SWEEP :
+      state.attackType === 'COMBO' ? ATK_COMBO : ATK_LIGHT;
+    const poseProgress = state.state === 'WINDUP'
+      ? 1 - state.attackTimer / Math.max(1, state.maxWindup)
+      : state.state === 'ATTACK'
+        ? 1 - state.attackTimer / poseProps.active
+        : state.state === 'RECOVER'
+          ? 1 - state.attackTimer / poseProps.recover
+          : 0;
+    const bossPose = sampleBossActionPose(state.state, state.attackType, poseProgress);
+    ctx.translate(dir * bossPose.lunge, bossPose.sink);
+    ctx.rotate(dir * bossPose.lean);
 
     if (profile && profile.hasCape) {
         ctx.save();
@@ -2409,8 +2410,22 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
     }
 
     // --- WEAPON ---
-    const handX = 30 * dir;
-    const handY = -h*0.6;
+    const handX = (30 + bossPose.reach) * dir;
+    const handY = -h * 0.6 + bossPose.weaponY;
+
+    // The sword arm follows the hilt through preparation and release.
+    ctx.strokeStyle = profile?.trimColor || '#d1d5db';
+    ctx.lineWidth = 7;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(14 * dir, -h * 0.78);
+    ctx.quadraticCurveTo((25 + bossPose.reach * 0.4) * dir, -h * 0.59, handX, handY);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.translate(handX, handY);
+    ctx.rotate(dir * bossPose.bladeRotation);
+    ctx.translate(-handX, -handY);
 
     ctx.strokeStyle = '#d1d5db'; 
     ctx.lineWidth = 4; 
@@ -2881,6 +2896,8 @@ const CombatCanvas: React.FC<CombatCanvasProps> = ({ bossData, playerStats, leve
         ctx.fill();
     }
 
+    // Unwind weapon rotation, then the root body transform.
+    ctx.restore();
     ctx.restore();
   };
 
