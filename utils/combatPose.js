@@ -89,8 +89,8 @@ export function sampleBossActionPose(mode, attackType, progress = 0) {
       phase: 'ANTICIPATION',
       lean: -0.10 * spec.power * buildup,
       sink: 7 * spec.power * buildup,
-      lunge: -4 * buildup,
-      reach: -5 * buildup,
+      lunge: -4 * spec.lunge * buildup,
+      reach: -5 * spec.lunge * buildup,
       weaponY: spec.weaponY * buildup,
       bladeRotation: -0.17 * spec.bladeRotation * buildup
     };
@@ -111,7 +111,7 @@ export function sampleBossActionPose(mode, attackType, progress = 0) {
       sink: base.sink * spec.power,
       lunge: base.lunge * spec.lunge,
       reach: base.reach * spec.lunge,
-      weaponY: spec.weaponY * (0.35 + 0.65 * Math.sin(t * Math.PI)),
+      weaponY: spec.weaponY * (1 - 0.8 * Math.sin(t * Math.PI)),
       bladeRotation: base.bladeRotation * spec.bladeRotation
     };
   }
@@ -121,12 +121,12 @@ export function sampleBossActionPose(mode, attackType, progress = 0) {
     const fade = 1 - smoothstep(t);
     return {
       phase: 'RECOVERY',
-      lean: 0.065 * spec.power * fade,
-      sink: 3 * fade,
-      lunge: 2 * fade,
-      reach: 3 * fade,
-      weaponY: spec.weaponY * 0.15 * fade,
-      bladeRotation: 0.07 * spec.bladeRotation * fade
+      lean: 0.07 * spec.power * fade,
+      sink: 3 * spec.power * fade,
+      lunge: 2 * spec.lunge * fade,
+      reach: 3 * spec.lunge * fade,
+      weaponY: spec.weaponY * fade,
+      bladeRotation: 0.08 * spec.bladeRotation * fade
     };
   }
 
